@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
-import '../../data/api_client.dart';
 
 class AuthPage extends ConsumerStatefulWidget {
   const AuthPage({super.key});
@@ -52,15 +52,33 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       _busy = true;
       _message = null;
     });
+    final auth = ref.read(supabaseProvider).auth;
     try {
-      final repo = ref.read(repositoryProvider);
       if (_signup) {
-        await repo.signUp(firstName: name, email: email, password: password);
+        final res = await auth.signUp(
+          email: email,
+          password: password,
+          data: {'first_name': name},
+        );
+        if (res.session == null && mounted) {
+          setState(() {
+            _signup = false;
+            _message = 'Compte créé. Confirme ton email, puis connecte-toi.';
+          });
+        }
       } else {
-        await repo.logIn(email: email, password: password);
+        await auth.signInWithPassword(email: email, password: password);
       }
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _message = e.message);
+    } on AuthException catch (e) {
+      if (mounted) {
+        setState(() => _message =
+            _signup ? e.message : 'Email ou mot de passe incorrect.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Connexion impossible. Vérifie ta connexion internet.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

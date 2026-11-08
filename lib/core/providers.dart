@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../data/api_client.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
 
@@ -9,18 +9,17 @@ final prefsProvider = Provider<SharedPreferences>(
   (ref) => throw UnimplementedError('Défini dans main()'),
 );
 
-final apiClientProvider =
-    Provider<ApiClient>((ref) => ApiClient(ref.watch(prefsProvider)));
+final supabaseProvider =
+    Provider<SupabaseClient>((ref) => Supabase.instance.client);
 
 final repositoryProvider =
-    Provider<Repository>((ref) => Repository(ref.watch(apiClientProvider)));
+    Provider<Repository>((ref) => Repository(ref.watch(supabaseProvider)));
 
-/// true quand un utilisateur est connecté.
-final sessionProvider = StreamProvider<bool>((ref) async* {
-  final api = ref.watch(apiClientProvider);
-  yield api.loggedIn;
-  await for (final loggedIn in api.authChanges) {
-    yield loggedIn;
+final sessionProvider = StreamProvider<Session?>((ref) async* {
+  final auth = ref.watch(supabaseProvider).auth;
+  yield auth.currentSession;
+  await for (final change in auth.onAuthStateChange) {
+    yield change.session;
   }
 });
 
@@ -40,19 +39,13 @@ final myProfileProvider = FutureProvider.autoDispose<Profile?>(
   (ref) => ref.watch(repositoryProvider).me(),
 );
 
-/// Interroge l'API toutes les 8 secondes tant que l'appli est ouverte.
+/// Se met à jour en direct dès qu'une alarme est créée pour moi.
 final alarmsProvider = StreamProvider.autoDispose<List<AlarmItem>>((ref) async* {
   final repo = ref.watch(repositoryProvider);
-  var first = true;
-  while (true) {
-    try {
-      yield await repo.myAlarms();
-      first = false;
-    } catch (_) {
-      // Au premier échec on remonte l'erreur ; ensuite on réessaie en silence.
-      if (first) rethrow;
-    }
-    await Future<void>.delayed(const Duration(seconds: 8));
+  final client = ref.watch(supabaseProvider);
+  yield await repo.myAlarms();
+  await for (final _ in client.from('alarms').stream(primaryKey: ['id'])) {
+    yield await repo.myAlarms();
   }
 });
 

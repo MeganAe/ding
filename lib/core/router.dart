@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/models.dart';
 import '../features/alarm/ring_page.dart';
@@ -20,7 +21,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: refresh,
     redirect: (context, state) {
       final done = ref.read(onboardingDoneProvider);
-      final loggedIn = ref.read(apiClientProvider).loggedIn;
+      final loggedIn = Supabase.instance.client.auth.currentSession != null;
       final path = state.matchedLocation;
 
       if (!done) return path == '/onboarding' ? null : '/onboarding';
