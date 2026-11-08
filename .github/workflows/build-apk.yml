@@ -1,0 +1,50 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "api/**"
+      - "**.md"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Le dépôt ne contient pas android/ : on le génère dans un dossier
+      # temporaire, puis on copie seulement ce dossier (lib/ reste intact).
+      - name: Générer android/ si absent
+        run: |
+          if [ ! -d android ]; then
+            flutter create --org com.ding --project-name ding --platforms=android /tmp/scaffold
+            cp -r /tmp/scaffold/android ./android
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <application|' android/app/src/main/AndroidManifest.xml
+          fi
+
+      - name: Dépendances
+        run: flutter pub get
+
+      - name: Compiler l'APK
+        run: |
+          flutter build apk --release \
+            --dart-define=API_URL=${{ secrets.API_URL }}
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ding-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
