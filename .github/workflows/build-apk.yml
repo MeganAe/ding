@@ -32,10 +32,14 @@ jobs:
             flutter create --org com.ding --project-name ding --platforms=android /tmp/scaffold
             cp -r /tmp/scaffold/android ./android
             sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <application|' android/app/src/main/AndroidManifest.xml
+            sed -i 's|android:label="ding"|android:label="Ding"|' android/app/src/main/AndroidManifest.xml
           fi
 
       - name: Dépendances
         run: flutter pub get
+
+      - name: Icône de l'app
+        run: dart run flutter_launcher_icons
 
       - name: Compiler l'APK
         run: |

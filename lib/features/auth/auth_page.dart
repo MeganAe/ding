@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
+import '../../data/api_client.dart';
 
 class AuthPage extends ConsumerStatefulWidget {
   const AuthPage({super.key});
@@ -52,33 +52,15 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       _busy = true;
       _message = null;
     });
-    final auth = ref.read(supabaseProvider).auth;
     try {
+      final repo = ref.read(repositoryProvider);
       if (_signup) {
-        final res = await auth.signUp(
-          email: email,
-          password: password,
-          data: {'first_name': name},
-        );
-        if (res.session == null && mounted) {
-          setState(() {
-            _signup = false;
-            _message = 'Compte créé. Confirme ton email, puis connecte-toi.';
-          });
-        }
+        await repo.signUp(firstName: name, email: email, password: password);
       } else {
-        await auth.signInWithPassword(email: email, password: password);
+        await repo.logIn(email: email, password: password);
       }
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() => _message =
-            _signup ? e.message : 'Email ou mot de passe incorrect.');
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _message =
-            'Connexion impossible. Vérifie ta connexion internet.');
-      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _message = e.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -94,6 +76,8 @@ class _AuthPageState extends ConsumerState<AuthPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Image.asset('assets/images/logo.png', height: 56),
+              const SizedBox(height: 16),
               Text('Ding', style: theme.displayLarge),
               const SizedBox(height: 8),
               Text(
