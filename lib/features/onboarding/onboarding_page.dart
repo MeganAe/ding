@@ -3,37 +3,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config.dart';
 import '../../core/providers.dart';
-import '../../core/rings.dart';
 import '../../core/theme.dart';
 
 class _Step {
-  const _Step(this.title, this.body, this.sources);
+  const _Step(this.title, this.body, this.image, this.alignment);
   final String title;
   final String body;
-  final List<RingSource> sources;
+  final String image;
+  final Alignment alignment;
 }
 
 final _steps = <_Step>[
   const _Step(
     'Choisis en secret.',
     "Tu désignes les personnes qui t'intriguent. Personne n'est prévenu de ton choix.",
-    [RingSource(0.5, 0.5, 5, DingColors.signal)],
+    'assets/images/onboarding_1.jpg',
+    Alignment(0.4, 0),
   ),
   const _Step(
     "Sans réciprocité, rien ne se passe.",
     "Si l'autre ne t'a pas choisi, il ne saura jamais rien. Aucune gêne, aucune trace.",
-    [
-      RingSource(0.28, 0.5, 3, DingColors.signal),
-      RingSource(0.74, 0.5, 0, DingColors.slate),
-    ],
+    'assets/images/onboarding_2.jpg',
+    Alignment(0, 0.4),
   ),
   _Step(
     "Quand c'est réciproque et proche, ça sonne.",
     "À moins de ${Config.alarmRadiusMeters} m l'un de l'autre, les deux téléphones sonnent. Pour ça, Ding utilise ta position quand l'appli est ouverte.",
-    const [
-      RingSource(0.36, 0.5, 4, DingColors.signal),
-      RingSource(0.64, 0.5, 4, DingColors.ink),
-    ],
+    'assets/images/onboarding_3.jpg',
+    const Alignment(0, -0.3),
   ),
 ];
 
@@ -105,10 +102,17 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: ClipRect(
-                          child: SizedBox.expand(
-                            child: CustomPaint(
-                              painter: RingsPainter(step.sources),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: SizedBox.expand(
+                              child: Image.asset(
+                                step.image,
+                                fit: BoxFit.cover,
+                                alignment: step.alignment,
+                                filterQuality: FilterQuality.high,
+                              ),
                             ),
                           ),
                         ),

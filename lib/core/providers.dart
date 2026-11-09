@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/api_client.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
 
@@ -9,17 +11,18 @@ final prefsProvider = Provider<SharedPreferences>(
   (ref) => throw UnimplementedError('Défini dans main()'),
 );
 
-final supabaseProvider =
-    Provider<SupabaseClient>((ref) => Supabase.instance.client);
+final apiClientProvider =
+    Provider<ApiClient>((ref) => ApiClient(ref.watch(prefsProvider)));
 
 final repositoryProvider =
-    Provider<Repository>((ref) => Repository(ref.watch(supabaseProvider)));
+    Provider<Repository>((ref) => Repository(ref.watch(apiClientProvider)));
 
-final sessionProvider = StreamProvider<Session?>((ref) async* {
-  final auth = ref.watch(supabaseProvider).auth;
-  yield auth.currentSession;
-  await for (final change in auth.onAuthStateChange) {
-    yield change.session;
+/// true quand l'utilisateur est connecté, false sinon.
+final sessionProvider = StreamProvider<bool>((ref) async* {
+  final api = ref.watch(apiClientProvider);
+  yield api.loggedIn;
+  await for (final loggedIn in api.authChanges) {
+    yield loggedIn;
   }
 });
 
@@ -39,14 +42,12 @@ final myProfileProvider = FutureProvider.autoDispose<Profile?>(
   (ref) => ref.watch(repositoryProvider).me(),
 );
 
-/// Se met à jour en direct dès qu'une alarme est créée pour moi.
-final alarmsProvider = StreamProvider.autoDispose<List<AlarmItem>>((ref) async* {
-  final repo = ref.watch(repositoryProvider);
-  final client = ref.watch(supabaseProvider);
-  yield await repo.myAlarms();
-  await for (final _ in client.from('alarms').stream(primaryKey: ['id'])) {
-    yield await repo.myAlarms();
-  }
+/// Interroge l'API toutes les 20 secondes pour détecter les nouvelles alarmes.
+/// (Le temps réel de Supabase n'existe plus : on fait du polling.)
+final alarmsProvider = FutureProvider.autoDispose<List<AlarmItem>>((ref) async {
+  final timer = Timer(const Duration(seconds: 20), ref.invalidateSelf);
+  ref.onDispose(timer.cancel);
+  return ref.watch(repositoryProvider).myAlarms();
 });
 
 /// Alarmes déjà présentées, pour ne faire sonner que les nouvelles.

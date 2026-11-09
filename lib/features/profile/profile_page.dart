@@ -116,7 +116,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
             ),
             const SizedBox(height: 12),
             TextButton(
-              onPressed: () => ref.read(supabaseProvider).auth.signOut(),
+              onPressed: () => ref.read(repositoryProvider).logOut(),
               child: const Text('Me déconnecter'),
             ),
           ],

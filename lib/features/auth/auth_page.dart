@@ -72,10 +72,34 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: SizedBox(
+                  height: 200,
+                  width: double.infinity,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: Image.asset(
+                      _signup
+                          ? 'assets/images/auth_signup.jpg'
+                          : 'assets/images/auth_login.jpg',
+                      key: ValueKey(_signup),
+                      fit: BoxFit.cover,
+                      alignment: _signup
+                          ? const Alignment(0, -0.3)
+                          : const Alignment(0, 0.6),
+                      filterQuality: FilterQuality.high,
+                      width: double.infinity,
+                      height: 200,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
               Image.asset('assets/images/logo.png', height: 56),
               const SizedBox(height: 16),
               Text('Ding', style: theme.displayLarge),
