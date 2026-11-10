@@ -1,1 +1,24 @@
 include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # Un `await` oublié est une source classique de bug silencieux.
+    unawaited_futures: warning
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - build/**
+
+linter:
+  rules:
+    # Déjà quasi respectées par le code existant : peu de bruit, de vrais gains.
+    - always_declare_return_types
+    - cancel_subscriptions
+    - close_sinks
+    - directives_ordering
+    - prefer_const_constructors
+    - prefer_final_fields
+    - prefer_single_quotes
+    - sized_box_for_whitespace
+    - unawaited_futures
+    - use_super_parameters

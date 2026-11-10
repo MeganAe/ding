@@ -16,6 +16,11 @@ create table if not exists users (
   first_name text not null default '',
   faculty text,
   promotion text,
+  -- false = l'utilisateur ne veut pas apparaître dans l'annuaire du campus
+  discoverable boolean not null default true,
+  -- failed_attempts + locked_until : anti bourrage de mot de passe ciblé
+  failed_attempts int not null default 0,
+  locked_until timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -44,8 +49,57 @@ create table if not exists alarms (
   unique (user_a, user_b, bucket),
   check (user_a < user_b)
 );
+
+-- Codes de réinitialisation. On ne stocke que le hachage : une fuite de la
+-- base ne permet pas de réinitialiser les comptes.
+create table if not exists password_resets (
+  user_id uuid primary key references users(id) on delete cascade,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  attempts int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- Index sur les colonnes « côté faible » des relations : sans eux, supprimer
+-- un compte scanne toute la table pour appliquer le on delete cascade.
+-- (user_a des alarmes est déjà couvert par la contrainte unique.)
+create index if not exists crushes_to_user_idx on crushes (to_user);
+create index if not exists alarms_user_b_idx on alarms (user_b);
+create index if not exists alarms_created_at_idx on alarms (created_at desc);
+`;
+
+// ⚠ Tout ce qui touche à une colonne ajoutée après la v0.1 doit passer par
+// ALTER ci-dessous, jamais par le SCHEMA : sur une base existante, un index
+// créé sur une colonne encore absente ferait échouer le démarrage.
+
+// Colonnes ajoutées après la première mise en production : on les crée sur les
+// bases existantes (create table if not exists ne le ferait pas).
+const COLUMNS = `
+alter table users add column if not exists discoverable boolean not null default true;
+alter table users add column if not exists failed_attempts int not null default 0;
+alter table users add column if not exists locked_until timestamptz;
 `;
 
 export async function migrate() {
   await pool.query(SCHEMA);
+  await pool.query(COLUMNS);
+}
+
+/**
+ * Purge les données devenues inutiles.
+ *
+ * - Les positions de plus de 24 h ne servent plus à rien (checkAlarms ignore
+ *   tout ce qui date de plus de 15 min) : les garder indéfiniment serait un
+ *   risque inutile pour une app qui promet que la position n'est jamais exposée.
+ * - Les alarmes de plus de 30 jours n'ont aucun intérêt pour l'utilisateur.
+ * - Les codes de réinitialisation expirés.
+ */
+export async function cleanup() {
+  await pool.query(
+    "delete from locations where updated_at < now() - interval '24 hours'",
+  );
+  await pool.query(
+    "delete from alarms where created_at < now() - interval '30 days'",
+  );
+  await pool.query('delete from password_resets where expires_at < now()');
 }

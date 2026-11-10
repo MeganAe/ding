@@ -1,0 +1,135 @@
+name: API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/api.yml"
+  pull_request:
+    paths:
+      - "api/**"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Vérification de l'API
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ding
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - run: npm ci
+
+      - name: Syntaxe
+        run: node --check src/index.js && node --check src/db.js
+
+      # Démarre l'API contre une vraie base jetable : attrape les erreurs de
+      # schéma SQL et les routes cassées avant le déploiement sur Render.
+      - name: Parcours critique
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ding
+          DATABASE_SSL: "false"
+          JWT_SECRET: secret-de-test-uniquement
+          PORT: "3999"
+        run: |
+          node src/index.js > /tmp/ding-api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3999/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:3999/health
+
+          B=http://localhost:3999
+          signup() {
+            curl -sf -X POST $B/auth/signup \
+              -H 'content-type: application/json' \
+              -d "{\"first_name\":\"$1\",\"email\":\"$2\",\"password\":\"secret123\"}"
+          }
+          get() { curl -sf -H "authorization: Bearer $1" "$B$2"; }
+          post() { curl -sf -X POST -H "authorization: Bearer $1" -H 'content-type: application/json' "$B$2" ${3:+-d "$3"}; }
+          token() { sed 's/.*"token":"\([^"]*\)".*/\1/'; }
+
+          TOKEN_A=$(signup Alice a@example.com | token)
+          TOKEN_B=$(signup Bo b@example.com | token)
+          test -n "$TOKEN_A" && test -n "$TOKEN_B"
+
+          A_ID=$(get "$TOKEN_A" /me | sed 's/.*"id":"\([^"]*\)".*/\1/')
+          B_ID=$(get "$TOKEN_A" /profiles | sed 's/.*"id":"\([^"]*\)".*/\1/')
+          test -n "$A_ID" && test -n "$B_ID"
+
+          echo "→ choix réciproques et idempotence"
+          post "$TOKEN_A" "/crushes/$B_ID" >/dev/null
+          post "$TOKEN_B" "/crushes/$A_ID" >/dev/null
+          post "$TOKEN_A" "/crushes/$B_ID" >/dev/null
+          get "$TOKEN_A" /crushes | grep -q "$B_ID"
+
+          echo "→ positions proches : une alarme doit apparaître"
+          post "$TOKEN_B" /location '{"lat":-2.5,"lng":28.86}' >/dev/null
+          post "$TOKEN_A" /location '{"lat":-2.5001,"lng":28.8601}' >/dev/null
+          get "$TOKEN_A" /alarms | grep -q alarm_id
+
+          echo "→ retrait du choix (DELETE idempotent)"
+          curl -sf -X DELETE -H "authorization: Bearer $TOKEN_A" "$B/crushes/$B_ID" >/dev/null
+          curl -sf -X DELETE -H "authorization: Bearer $TOKEN_A" "$B/crushes/$B_ID" >/dev/null
+          ! get "$TOKEN_A" /crushes | grep -q "$B_ID"
+
+          echo "→ visibilité : masquer son profil le retire de l'annuaire"
+          put() { curl -sf -X PUT -H "authorization: Bearer $1" \
+            -H 'content-type: application/json' "$B$2" -d "$3"; }
+          put "$TOKEN_A" /me '{"first_name":"Alice","discoverable":false}' >/dev/null
+          ! get "$TOKEN_B" /profiles | grep -q "$A_ID"
+          put "$TOKEN_A" /me '{"first_name":"Alice","discoverable":true}' >/dev/null
+          get "$TOKEN_B" /profiles | grep -q "$A_ID"
+
+          echo "→ mot de passe oublié (le code part dans les logs sans RESEND_API_KEY)"
+          curl -sf -X POST $B/auth/forgot -H 'content-type: application/json' \
+            -d '{"email":"b@example.com"}' >/dev/null
+          CODE=$(grep -o 'réinitialisation Ding est : [0-9]*' /tmp/ding-api.log \
+            | tail -1 | grep -o '[0-9]\{6\}$')
+          test -n "$CODE"
+          # Mauvais code refusé
+          ! curl -sf -X POST $B/auth/reset -H 'content-type: application/json' \
+            -d '{"email":"b@example.com","code":"000000","password":"nouveau123"}' >/dev/null
+          NEW_TOKEN=$(curl -sf -X POST $B/auth/reset \
+            -H 'content-type: application/json' \
+            -d "{\"email\":\"b@example.com\",\"code\":\"$CODE\",\"password\":\"nouveau123\"}" | token)
+          test -n "$NEW_TOKEN"
+          # Ancien mot de passe refusé, nouveau accepté
+          ! curl -sf -X POST $B/auth/login -H 'content-type: application/json' \
+            -d '{"email":"b@example.com","password":"secret123"}' >/dev/null
+          curl -sf -X POST $B/auth/login -H 'content-type: application/json' \
+            -d '{"email":"b@example.com","password":"nouveau123"}' >/dev/null
+
+          echo "→ suppression de compte protégée par le mot de passe"
+          ! curl -sf -X DELETE -H "authorization: Bearer $NEW_TOKEN" \
+            -H 'content-type: application/json' -d '{"password":"faux"}' "$B/me" >/dev/null
+          curl -sf -X DELETE -H "authorization: Bearer $NEW_TOKEN" \
+            -H 'content-type: application/json' -d '{"password":"nouveau123"}' "$B/me" >/dev/null
+          ! get "$TOKEN_A" /profiles | grep -q "$B_ID"
+
+          echo "✓ Parcours critique complet"

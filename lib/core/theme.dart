@@ -6,7 +6,10 @@ import 'package:google_fonts/google_fonts.dart';
 class DingColors {
   static const paper = Color(0xFFF3F5F9);
   static const ink = Color(0xFF161A2E);
-  static const signal = Color(0xFFE5383B);
+  // Assombri depuis #E5383B : le texte clair sur ce rouge atteignait
+  // 3,88:1, sous le seuil AA (4,5:1) pour du texte de 16 px.
+  // #D32F2F donne 4,56:1 avec `paper`, sans changer le caractère.
+  static const signal = Color(0xFFD32F2F);
   static const mist = Color(0xFFDDE3EE);
   static const slate = Color(0xFF5B6378);
 }

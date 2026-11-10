@@ -1,7 +1,7 @@
 name: ding
 description: Une alarme qui sonne quand c'est réciproque.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -14,7 +14,9 @@ dependencies:
   go_router: ^14.6.0
   google_fonts: ^6.2.1
   shared_preferences: ^2.3.3
+  flutter_secure_storage: ^9.2.2
   geolocator: ^13.0.2
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:
@@ -26,12 +28,13 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/audio/
 
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/icon/icon.png"
-  adaptive_icon_background: "#E5383B"
+  adaptive_icon_background: "#D32F2F"
   adaptive_icon_foreground: "assets/icon/foreground.png"
   adaptive_icon_monochrome: "assets/icon/monochrome.png"
-  min_sdk_android: 21
+  min_sdk_android: 23

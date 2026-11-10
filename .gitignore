@@ -1,0 +1,37 @@
+# ───────────── Flutter / Dart ─────────────
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+*.iml
+.idea/
+.vscode/
+*.log
+
+# ───────────── Android ─────────────
+# Le projet Gradle est généré par tool/setup_android.sh à partir du scaffold
+# `flutter create` : seuls les fichiers de référence de tool/android/ sont
+# versionnés. Supprime ce motif si tu préfères versionner android/ en entier.
+# Le « / » de tête est important : sans lui, tool/android/ serait ignoré aussi.
+/android/
+*.jks
+*.keystore
+key.properties
+
+# ───────────── Secrets ─────────────
+.env
+.env.*
+!.env.example
+*.pem
+
+# ───────────── Système ─────────────
+.DS_Store
+Thumbs.db
+
+# ───────────── Node (api) ─────────────
+node_modules/
+npm-debug.log*

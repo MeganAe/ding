@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme.dart';
+import '../../data/api_client.dart';
 import '../../data/models.dart';
 
 class DiscoverPage extends ConsumerStatefulWidget {
@@ -15,21 +16,62 @@ class DiscoverPage extends ConsumerStatefulWidget {
 class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   String _query = '';
 
-  Future<void> _toggle(Profile p) async {
+  /// Copie locale optimiste des choix : le bouton réagit tout de suite et ne
+  /// clignote pas (ni ne repasse à « Choisir ») pendant le rechargement de la
+  /// liste renvoyée par le serveur.
+  Set<String>? _chosen;
+
+  /// Personnes dont une requête est en cours : évite les doubles envois.
+  final _busy = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    // Si la liste est déjà en cache, on part de là sans attendre un rebuild.
+    final cached = ref.read(crushesProvider).valueOrNull;
+    if (cached != null) _chosen = {...cached};
+
+    // Resynchronise avec le serveur, sauf si des requêtes sont en vol.
+    ref.listenManual(crushesProvider, (_, next) {
+      final server = next.valueOrNull;
+      if (server == null || _busy.isNotEmpty) return;
+      setState(() => _chosen = {...server});
+    });
+  }
+
+  Future<void> _setChoice(Profile p, {required bool active}) async {
+    if (_busy.contains(p.id)) return;
     final messenger = ScaffoldMessenger.of(context);
+    final before = _chosen == null ? null : {..._chosen!};
+
+    setState(() {
+      _busy.add(p.id);
+      final set = _chosen ??= <String>{};
+      if (active) {
+        set.add(p.id);
+      } else {
+        set.remove(p.id);
+      }
+    });
+
     try {
-      final active = await ref.read(repositoryProvider).toggleCrush(p.id);
-      ref.invalidate(crushesProvider);
+      await ref.read(repositoryProvider).setCrush(p.id, active: active);
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(SnackBar(
         content: Text(active
             ? "Enregistré. Personne n'est prévenu."
             : 'Choix retiré.'),
       ));
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _chosen = before);
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
     } catch (_) {
+      if (mounted) setState(() => _chosen = before);
       messenger.showSnackBar(
         const SnackBar(content: Text('Action impossible. Réessaie.')),
       );
+    } finally {
+      if (mounted) setState(() => _busy.remove(p.id));
     }
   }
 
@@ -37,7 +79,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
     final profiles = ref.watch(profilesProvider);
-    final crushes = ref.watch(crushesProvider).valueOrNull ?? <String>{};
+    final server = ref.watch(crushesProvider).valueOrNull;
+    if (server != null && _chosen == null) _chosen = {...server};
+    final chosen = _chosen ?? const <String>{};
 
     return SafeArea(
       child: Column(
@@ -67,18 +111,26 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           Expanded(
             child: profiles.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, __) => Center(
+              error: (e, __) => Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('Impossible de charger le campus.'),
+                      Text(
+                        e is ApiException
+                            ? e.message
+                            : 'Impossible de charger le campus.',
+                        textAlign: TextAlign.center,
+                      ),
                       const SizedBox(height: 12),
                       OutlinedButton(
                         style: OutlinedButton.styleFrom(
                             minimumSize: const Size(140, 44)),
-                        onPressed: () => ref.invalidate(profilesProvider),
+                        onPressed: () {
+                          ref.invalidate(profilesProvider);
+                          ref.invalidate(crushesProvider);
+                        },
                         child: const Text('Réessayer'),
                       ),
                     ],
@@ -103,57 +155,105 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     ),
                   );
                 }
-                return ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                  itemCount: list.length,
-                  itemBuilder: (_, i) {
-                    final p = list[i];
-                    final chosen = crushes.contains(p.id);
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 24,
-                            backgroundColor: DingColors.mist,
-                            foregroundColor: DingColors.ink,
-                            child: Text(p.initial, style: theme.titleMedium),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(p.firstName, style: theme.titleMedium),
-                                if (p.detail.isNotEmpty)
-                                  Text(p.detail, style: theme.bodySmall),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 104,
-                            child: chosen
-                                ? FilledButton(
-                                    style: FilledButton.styleFrom(
-                                        minimumSize: const Size(104, 40)),
-                                    onPressed: () => _toggle(p),
-                                    child: const Text('Choisi'),
-                                  )
-                                : OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                        minimumSize: const Size(104, 40)),
-                                    onPressed: () => _toggle(p),
-                                    child: const Text('Choisir'),
-                                  ),
-                          ),
-                        ],
-                      ),
-                    );
+                return RefreshIndicator(
+                  onRefresh: () async {
+                    ref.invalidate(profilesProvider);
+                    ref.invalidate(crushesProvider);
+                    await ref.read(profilesProvider.future);
                   },
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                    itemCount: list.length,
+                    itemBuilder: (_, i) => _ProfileRow(
+                      profile: list[i],
+                      chosen: chosen.contains(list[i].id),
+                      busy: _busy.contains(list[i].id),
+                      onChanged: (active) =>
+                          _setChoice(list[i], active: active),
+                    ),
+                  ),
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileRow extends StatelessWidget {
+  const _ProfileRow({
+    required this.profile,
+    required this.chosen,
+    required this.busy,
+    required this.onChanged,
+  });
+
+  final Profile profile;
+  final bool chosen;
+  final bool busy;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context).textTheme;
+    const pill = Size(104, 40);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor: DingColors.mist,
+            foregroundColor: DingColors.ink,
+            child: Text(profile.initial, style: theme.titleMedium),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(profile.firstName, style: theme.titleMedium),
+                if (profile.detail.isNotEmpty)
+                  Text(profile.detail, style: theme.bodySmall),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: pill.width,
+            child: busy
+                ? const SizedBox(
+                    height: 40,
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  )
+                : Semantics(
+                    button: true,
+                    selected: chosen,
+                    label: chosen
+                        ? '${profile.firstName} : choisi, appuyer pour retirer'
+                        : 'Choisir ${profile.firstName}',
+                    child: chosen
+                        ? FilledButton(
+                            style: FilledButton.styleFrom(minimumSize: pill),
+                            onPressed: () => onChanged(false),
+                            child: const Text('Choisi'),
+                          )
+                        : OutlinedButton(
+                            style: OutlinedButton.styleFrom(minimumSize: pill),
+                            onPressed: () => onChanged(true),
+                            child: const Text('Choisir'),
+                          ),
+                  ),
           ),
         ],
       ),

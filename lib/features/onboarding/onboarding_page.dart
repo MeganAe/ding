@@ -111,7 +111,11 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
                                 step.image,
                                 fit: BoxFit.cover,
                                 alignment: step.alignment,
-                                filterQuality: FilterQuality.high,
+                                filterQuality: FilterQuality.medium,
+                                // Décodage à la taille d'affichage : les JPEG
+                                // pleine résolution coûtent cher en mémoire
+                                // sur un téléphone d'entrée de gamme.
+                                cacheWidth: 1080,
                               ),
                             ),
                           ),

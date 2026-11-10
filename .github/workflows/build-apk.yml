@@ -6,11 +6,36 @@ on:
     paths-ignore:
       - "api/**"
       - "**.md"
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
+  check:
+    name: Analyse et tests
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # Non bloquant pour l'instant : à passer en bloquant une fois les
+      # dernières remarques corrigées (voir AUDIT.md §6.4).
+      - name: Analyse statique
+        continue-on-error: true
+        run: flutter analyze
+
+      - name: Tests unitaires
+        run: flutter test --reporter expanded
+
+  build:
+    name: APK de release
+    runs-on: ubuntu-latest
+    needs: check
     steps:
       - uses: actions/checkout@v4
 
@@ -24,31 +49,31 @@ jobs:
           channel: stable
           cache: true
 
-      # Le dépôt ne contient pas android/ : on le génère dans un dossier
-      # temporaire, puis on copie seulement ce dossier (lib/ reste intact).
-      - name: Générer android/ si absent
-        run: |
-          if [ ! -d android ]; then
-            flutter create --org com.ding --project-name ding --platforms=android /tmp/scaffold
-            cp -r /tmp/scaffold/android ./android
-            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <application|' android/app/src/main/AndroidManifest.xml
-            sed -i 's|android:label="ding"|android:label="Ding"|' android/app/src/main/AndroidManifest.xml
-          fi
+      - run: flutter pub get
 
-      - name: Dépendances
-        run: flutter pub get
+      # Génère android/ puis applique le manifeste de référence versionné
+      # (permissions, allowBackup=false, config réseau, minSdk 23).
+      - name: Préparer android/
+        run: bash tool/setup_android.sh
 
       - name: Icône de l'app
         run: dart run flutter_launcher_icons
 
       - name: Compiler l'APK
+        env:
+          API_URL: ${{ secrets.API_URL }}
         run: |
+          if [ -z "$API_URL" ]; then
+            echo "::error::Le secret API_URL n'est pas défini : l'APK ne pourrait joindre aucune API."
+            exit 1
+          fi
           flutter build apk --release \
-            --dart-define=API_URL=${{ secrets.API_URL }}
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define=API_URL="$API_URL"
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
-          name: ding-apk
+          name: ding-apk-${{ github.run_number }}
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

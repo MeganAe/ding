@@ -8,10 +8,14 @@ API REST Node.js + PostgreSQL. Le matching se fait côté serveur : aucune route
 |---|---|---|
 | POST | `/auth/signup` | Créer un compte (`first_name`, `email`, `password`) |
 | POST | `/auth/login` | Se connecter (`email`, `password`) |
-| GET / PUT | `/me` | Lire / modifier mon profil |
+| POST | `/auth/forgot` | Demander un code de réinitialisation (`email`) |
+| POST | `/auth/reset` | Échanger le code contre un mot de passe (`email`, `code`, `password`) |
+| GET / PUT / DELETE | `/me` | Lire / modifier / supprimer mon compte |
 | GET | `/profiles` | Annuaire du campus (champs publics) |
 | GET | `/crushes` | Mes choix uniquement |
-| POST | `/crushes/:id/toggle` | Choisir / retirer quelqu'un |
+| POST | `/crushes/:id` | Choisir quelqu'un (idempotent) |
+| DELETE | `/crushes/:id` | Retirer un choix (idempotent) |
+| POST | `/crushes/:id/toggle` | *(déprécié)* inverse l'état — conservé pour les anciennes versions de l'app |
 | POST | `/location` | Envoyer ma position (`lat`, `lng`) |
 | GET | `/alarms` | Mes alarmes |
 | GET | `/health` | Vérification (pour l'hébergeur) |
@@ -37,6 +41,41 @@ Les tables se créent toutes seules au premier démarrage.
 4. Déploie, puis teste `https://ton-api.onrender.com/health`.
 
 **Limite de l'offre gratuite** : l'API se met en veille après un moment sans appel, et le premier appel suivant peut prendre environ une minute. Les conditions des offres gratuites changent : vérifie-les sur le site de l'hébergeur. Pour limiter la veille, un service de ping (ex. UptimeRobot) peut appeler `/health` toutes les 5 minutes.
+
+## Limites de débit et verrouillage
+
+- `/auth/*` : 30 requêtes / 15 min par IP.
+- Verrouillage par compte : 10 échecs de connexion → 15 minutes de blocage.
+  La limite par IP ne protège pas d'un bourrage ciblé depuis un réseau partagé.
+- `/location` : 20 requêtes / min (chaque appel recalcule les alarmes).
+- Autres routes authentifiées : 240 requêtes / min.
+
+## Emails
+
+`RESEND_API_KEY` absente → les emails (code de réinitialisation) sont écrits
+dans les logs du serveur. C'est le mode utilisé en développement et dans la CI.
+
+Avec une clé Resend (offre gratuite : 3 000 emails/mois) :
+
+```
+RESEND_API_KEY=re_...
+MAIL_FROM=Ding <no-reply@ton-domaine.fr>
+```
+
+`MAIL_FROM` doit utiliser un domaine vérifié chez Resend, sinon Resend refuse
+l'envoi. En attendant, `onboarding@resend.dev` fonctionne pour des tests vers
+ta propre adresse.
+
+## Suppression d'un compte
+
+`DELETE /me` exige le mot de passe dans le corps. Tout part en cascade
+(choix, positions, alarmes, codes de réinitialisation).
+
+## Entretien
+
+Au démarrage puis toutes les 6 h, l'API purge les positions de plus de 24 h
+(elles ne servent plus à rien : seules celles de moins de 15 min comptent) et
+les alarmes de plus de 30 jours.
 
 ## En local
 

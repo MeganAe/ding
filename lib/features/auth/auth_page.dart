@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/providers.dart';
@@ -19,6 +20,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
   final _password = TextEditingController();
   bool _signup = false;
   bool _busy = false;
+  bool _showPassword = false;
   String? _message;
 
   @override
@@ -121,13 +123,34 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                 controller: _email,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
+                autocorrect: false,
+                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(hintText: 'Email'),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(hintText: 'Mot de passe'),
+                obscureText: !_showPassword,
+                autofillHints: [
+                  _signup ? AutofillHints.newPassword : AutofillHints.password,
+                ],
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _busy ? null : _submit(),
+                decoration: InputDecoration(
+                  hintText: 'Mot de passe',
+                  suffixIcon: IconButton(
+                    tooltip: _showPassword
+                        ? 'Masquer le mot de passe'
+                        : 'Afficher le mot de passe',
+                    icon: Icon(
+                      _showPassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                    onPressed: () =>
+                        setState(() => _showPassword = !_showPassword),
+                  ),
+                ),
               ),
               if (_message != null) ...[
                 const SizedBox(height: 16),
@@ -141,6 +164,13 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                 onPressed: _busy ? null : _submit,
                 child: Text(_signup ? 'Créer mon compte' : 'Me connecter'),
               ),
+              if (!_signup)
+                Center(
+                  child: TextButton(
+                    onPressed: _busy ? null : () => context.push('/forgot'),
+                    child: const Text('Mot de passe oublié ?'),
+                  ),
+                ),
               const SizedBox(height: 8),
               Center(
                 child: TextButton(
