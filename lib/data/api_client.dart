@@ -52,6 +52,7 @@ class ApiClient {
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Map<String, String>? query,
   }) async {
     if (_baseUrl == null && !Config.isConfigured) {
       throw const ApiException(
@@ -60,7 +61,18 @@ class ApiClient {
       );
     }
 
-    final req = http.Request(method, Uri.parse('${_baseUrl ?? Config.apiUrl}$path'));
+    final base = Uri.parse('${_baseUrl ?? Config.apiUrl}$path');
+    // Les valeurs vides sont ignorées : `?q=` ne doit pas filtrer sur rien.
+    final uri = (query == null || query.isEmpty)
+        ? base
+        : base.replace(
+            queryParameters: {
+              ...base.queryParameters,
+              for (final e in query.entries)
+                if (e.value.isNotEmpty) e.key: e.value,
+            },
+          );
+    final req = http.Request(method, uri);
     req.headers['Content-Type'] = 'application/json';
     final token = _tokens.token;
     if (token != null) req.headers['Authorization'] = 'Bearer $token';

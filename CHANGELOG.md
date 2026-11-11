@@ -1,5 +1,119 @@
 # Journal des modifications
 
+## 0.3.1 — l'alarme sonne écran éteint
+
+Jusqu'ici, Ding ne vous localisait que lorsque l'app était ouverte : autant dire
+jamais au bon moment. Le suivi vit maintenant dans un service de premier plan
+Android.
+
+- **Service de premier plan** (`lib/core/location_service.dart`) : une
+  notification permanente « Ding veille », et la position continue d'être
+  envoyée quand l'app est en arrière-plan ou l'écran éteint.
+- **Deux sources, volontairement** : un flux de positions (précision haute,
+  envoi dès 100 m de déplacement) et un battement toutes les 2 minutes qui
+  renvoie la dernière position connue. Sans le battement, rester assis une
+  demi-heure rendait les coordonnées périmées côté serveur — et le croisement
+  ne se faisait plus.
+- **L'intervalle vient du serveur** (`GET /config`), plus d'une constante
+  recopiée dans l'app.
+- **Permission « Toujours »** : un bandeau explique pourquoi elle est
+  nécessaire et emmène directement dans les réglages Android. Il est
+  escamotable, pour ne pas harceler.
+- `ACCESS_BACKGROUND_LOCATION` ajouté au manifeste de référence, avec la
+  justification Play Store en commentaire (déclaration « Position en
+  arrière-plan » obligatoire).
+- 5 tests unitaires sur la règle d'envoi (première position, immobilité,
+  intervalle écoulé, déplacement de 100 m) : 36 tests au total.
+- `docs/alarme-en-arriere-plan.md` réécrit : ce qui est fait, comment le
+  vérifier sur un téléphone, et ce qui reste.
+
+### Ce que ça ne fait pas encore
+
+L'alarme ne sonne pas si l'app est **quittée** (retour arrière, balayage dans
+les tâches récentes) : Android détruit alors le service, et le suivi s'arrête.
+Il faut pour ça un isolate séparé (`flutter_background_service`) ou des
+notifications push FCM — les deux demandent un téléphone et un projet Firebase
+pour être vérifiés, donc ils ne sont pas dans cette version.
+
+## 0.3.0 — confiance et contrôle
+
+Cette version ne change pas la promesse de Ding. Elle fait en sorte qu'on
+puisse l'utiliser sans se sentir à découvert.
+
+### Blocage et signalement
+
+- **Bloquer quelqu'un** (`POST /blocks/:id`) : la personne disparaît de ton
+  annuaire *et du sien*, vos choix mutuels sont effacés, vos alarmes passées
+  sont supprimées, et plus aucune alarme ne peut sonner entre vous. La
+  vérification est faite côté serveur dans la requête de croisement, pas
+  seulement dans l'app.
+- **Débloquer** (`DELETE /blocks/:id`), avec la liste des personnes bloquées
+  dans l'écran Profil.
+- **Signaler** (`POST /reports/:id`) avec un motif (harcèlement, faux profil,
+  intimidation, autre). Une seule ligne par paire, mise à jour au lieu d'être
+  dupliquée. Aucune décision automatique : le signalement est enregistré pour
+  être traité.
+- Ces deux gestes sont accessibles depuis l'annuaire, par le menu de chaque
+  personne — pas enterrés dans un écran de réglages.
+
+### Annuaire : recherche et pagination côté serveur
+
+- `GET /profiles` accepte `q` (début de prénom, insensible à la casse),
+  `limit` (1 à 100) et `offset`, et répond `{items, total, next_offset}`.
+  L'ancienne version chargeait 500 profils et filtrait dans le téléphone.
+- L'app fait défiler les pages au fur et à mesure et affiche le total
+  (« 42 personnes »). La recherche est temporisée à 320 ms.
+- L'app accepte encore l'ancienne réponse en tableau : elle peut être publiée
+  avant que l'API ne soit déployée.
+
+### Sessions
+
+- Les jetons portent maintenant un identifiant (`jti`) et `POST /auth/logout`
+  les révoque côté serveur : un jeton copié ne sert plus à rien après une
+  déconnexion. Les jetons émis avant cette version restent valables jusqu'à
+  leur expiration, sinon un déploiement déconnecterait tout le monde.
+- Purge des jetons révoqués expirés dans la tâche de nettoyage.
+
+### Réglages venus du serveur
+
+- `GET /config` expose le rayon d'alarme et les intervalles. Le rayon n'est
+  plus recopié en dur dans l'app : une valeur changée côté serveur s'applique
+  sans nouvelle version sur le Play Store.
+
+### Design intérieur
+
+- **Un système de surfaces** : cartes blanches à filet, rayon 18, sans ombre ;
+  libellés de section en petites capitales ; pastilles d'initiale colorées
+  (`InitialsAvatar`) à la place des avatars vides.
+- **Découvrir** : chaque personne est une carte (initiale, prénom, faculté),
+  avec un bouton *Choisir* qui devient *Choisi* en fondu et un menu
+  d'options. En-tête avec le nombre de personnes, recherche avec bouton
+  d'effacement, écran vide qui explique quoi faire.
+- **Alarmes** : groupées par jour (« Aujourd'hui », « Hier », « 12 mars »),
+  heure et temps relatif (« il y a 4 min »), étiquette *Nouveau*, et un appui
+  rouvre l'écran qui sonne.
+- **Badge** sur l'onglet Alarmes : le nombre d'alarmes reçues depuis la
+  dernière visite, indépendant du fait de les avoir entendues.
+- **Profil** : sections (Mon profil, Visibilité, Personnes bloquées, Ta vie
+  privée, Le compte) au lieu d'une colonne de champs, avec l'email affiché et
+  la liste des blocages.
+- **Écran qui sonne** : l'initiale de la personne au centre des ondes, la
+  distance, la faculté, un bouton principal et un seul réglage (le son).
+
+### Qualité
+
+- **L'API a maintenant des tests de bout en bout sur une vraie PostgreSQL**
+  (`api/test/parcours.test.js`, 20 cas) : comptes, pagination, croisement
+  réciproque à 150 m, une alarme par heure, blocage, signalement, révocation.
+  Le schéma SQL n'avait jamais été exécuté avant cette version.
+- **9 nouveaux tests d'interface** côté Flutter (onboarding, connexion,
+  annuaire, alarmes) : 31 tests au total.
+- `flutter analyze` est désormais bloquant en CI (il est propre depuis la
+  0.2.2), et la CI de l'API exécute la suite `npm test` sur une base jetable.
+- Les quotas de l'API sont réglables par l'environnement (`AUTH_RATE_LIMIT`,
+  `API_RATE_LIMIT`, `LOCATION_RATE_LIMIT`), ce qui permet aux tests de créer
+  des dizaines de comptes sans désactiver la protection.
+
 ## 0.2.2 — connexion et inscription dans le langage de l'onboarding
 
 - **Vos photos d'origine sont conservées** : aucune image n'est remplacée ni

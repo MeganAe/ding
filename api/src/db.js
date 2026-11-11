@@ -60,6 +60,44 @@ create table if not exists password_resets (
   created_at timestamptz not null default now()
 );
 
+-- Blocage : un blocage coupe l'annuaire, les choix et les alarmes dans les
+-- deux sens. C'est un geste de sécurité, pas un réglage de confort.
+create table if not exists blocks (
+  user_id uuid not null references users(id) on delete cascade,
+  blocked_id uuid not null references users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, blocked_id),
+  check (user_id <> blocked_id)
+);
+
+-- Signalements : on stocke le fait et le motif, sans rien décider
+-- automatiquement. Une seule ligne par paire, avec le dernier motif.
+create table if not exists reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references users(id) on delete cascade,
+  reported_id uuid not null references users(id) on delete cascade,
+  reason text not null,
+  details text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (reporter_id, reported_id),
+  check (reporter_id <> reported_id)
+);
+
+-- Jetons révoqués (déconnexion à distance). On ne garde que l'identifiant du
+-- jeton jusqu'à son expiration : au-delà, il ne vaut plus rien de toute façon.
+create table if not exists revoked_tokens (
+  jti uuid primary key,
+  user_id uuid not null references users(id) on delete cascade,
+  expires_at timestamptz not null
+);
+
+create index if not exists blocks_blocked_idx on blocks (blocked_id);
+create index if not exists reports_reported_idx on reports (reported_id);
+create index if not exists revoked_tokens_expiry_idx on revoked_tokens (expires_at);
+-- Recherche dans l'annuaire : on cherche par préfixe, en minuscules.
+create index if not exists users_first_name_idx on users (lower(first_name));
+
 -- Index sur les colonnes « côté faible » des relations : sans eux, supprimer
 -- un compte scanne toute la table pour appliquer le on delete cascade.
 -- (user_a des alarmes est déjà couvert par la contrainte unique.)
@@ -102,4 +140,5 @@ export async function cleanup() {
     "delete from alarms where created_at < now() - interval '30 days'",
   );
   await pool.query('delete from password_resets where expires_at < now()');
+  await pool.query('delete from revoked_tokens where expires_at < now()');
 }

@@ -53,7 +53,8 @@ fi
 
 # Garde-fou : si les permissions disparaissent du manifeste, l'APK serait
 # incapable de se localiser et l'app semblerait cassée.
-for permission in ACCESS_FINE_LOCATION INTERNET POST_NOTIFICATIONS; do
+for permission in ACCESS_FINE_LOCATION ACCESS_BACKGROUND_LOCATION \
+  INTERNET POST_NOTIFICATIONS FOREGROUND_SERVICE_LOCATION; do
   if ! grep -q "$permission" android/app/src/main/AndroidManifest.xml; then
     echo "✗ Permission $permission absente du manifeste." >&2
     exit 1

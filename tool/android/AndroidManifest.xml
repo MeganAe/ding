@@ -10,16 +10,22 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Position : uniquement au premier plan. Les positions ne quittent
-         jamais le serveur, mais l'app doit pouvoir les lire. -->
+    <!-- Position. Les coordonnées ne sont jamais montrées à un autre
+         utilisateur et sont effacées au bout de 24 h côté serveur.
+         ACCESS_BACKGROUND_LOCATION : sans elle, l'alarme ne sonne que si
+         l'app est ouverte — c'est-à-dire jamais au bon moment. Sur le Play
+         Store, cette permission impose de remplir la déclaration « Position
+         en arrière-plan » et de justifier l'usage. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Alarme : vibration + son. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Prévu pour le passage en service de premier plan et en notifications
-         (Android 13+ exige POST_NOTIFICATIONS à l'exécution). -->
+    <!-- Service de premier plan qui suit la position (déclaré par le plugin
+         geolocator, type « location »). Android 13+ exige aussi
+         POST_NOTIFICATIONS à l'exécution pour que sa notification soit visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />

@@ -3,22 +3,25 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/providers.dart';
 import '../../core/rings.dart';
 import '../../core/theme.dart';
+import '../../core/widgets/initials_avatar.dart';
 import '../../data/models.dart';
 
 /// L'écran qui sonne : le seul moment animé de l'app.
-class RingPage extends StatefulWidget {
+class RingPage extends ConsumerStatefulWidget {
   const RingPage({super.key, required this.alarm});
   final AlarmItem alarm;
 
   @override
-  State<RingPage> createState() => _RingPageState();
+  ConsumerState<RingPage> createState() => _RingPageState();
 }
 
-class _RingPageState extends State<RingPage>
+class _RingPageState extends ConsumerState<RingPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
@@ -95,6 +98,10 @@ class _RingPageState extends State<RingPage>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
+    final radius = ref.watch(alarmRadiusProvider);
+    final name =
+        widget.alarm.otherName.isEmpty ? 'Quelqu’un' : widget.alarm.otherName;
+
     final onSignal = theme.displayLarge?.copyWith(color: DingColors.paper);
 
     return Scaffold(
@@ -109,17 +116,31 @@ class _RingPageState extends State<RingPage>
           ),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Spacer(),
-                  Text('${widget.alarm.otherName} est tout près.',
-                      style: onSignal),
-                  const SizedBox(height: 16),
+                  // L'initiale, posée au centre des ondes.
+                  InitialsAvatar(name: name, radius: 34, highlight: true),
+                  const SizedBox(height: 24),
+                  Text('$name est tout près.', style: onSignal),
+                  const SizedBox(height: 12),
                   Text(
                     'Vous vous êtes choisis. Levez les yeux.',
                     style: theme.bodyLarge?.copyWith(color: DingColors.paper),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    [
+                      'à moins de $radius m',
+                      if (widget.alarm.otherFaculty != null &&
+                          widget.alarm.otherFaculty!.isNotEmpty)
+                        widget.alarm.otherFaculty!,
+                    ].join(' · '),
+                    style: theme.bodySmall?.copyWith(
+                      color: DingColors.paper.withValues(alpha: 0.85),
+                    ),
                   ),
                   const SizedBox(height: 32),
                   FilledButton(
@@ -128,16 +149,18 @@ class _RingPageState extends State<RingPage>
                       foregroundColor: DingColors.ink,
                     ),
                     onPressed: _close,
-                    child: const Text('Fermer'),
+                    child: const Text('J’y vais'),
                   ),
                   if (_soundOn) ...[
                     const SizedBox(height: 8),
-                    TextButton(
-                      style: TextButton.styleFrom(
-                        foregroundColor: DingColors.paper,
+                    Center(
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          foregroundColor: DingColors.paper,
+                        ),
+                        onPressed: _silence,
+                        child: const Text('Couper le son'),
                       ),
-                      onPressed: _silence,
-                      child: const Text('Couper le son'),
                     ),
                   ],
                 ],

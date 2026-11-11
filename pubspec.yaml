@@ -1,7 +1,7 @@
 name: ding
 description: Une alarme qui sonne quand c'est réciproque.
 publish_to: none
-version: 0.2.2+4
+version: 0.3.1+6
 
 environment:
   sdk: ">=3.6.0 <4.0.0"

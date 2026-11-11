@@ -159,9 +159,9 @@ void main() {
         ),
       ));
 
-      final profils = await repo.campus();
-      expect(profils, hasLength(1));
-      expect(profils.single.firstName, 'Bo');
+      final page = await repo.campus();
+      expect(page.items, hasLength(1));
+      expect(page.items.single.firstName, 'Bo');
     });
 
     test('resetPassword enregistre le nouveau jeton', () async {
@@ -180,6 +180,136 @@ void main() {
         password: 'secret123',
       );
       expect(store.token, 'jeton-neuf');
+    });
+  });
+
+  group('0.3.0 — annuaire, blocage, révocation', () {
+    test('campus envoie la recherche et la pagination', () async {
+      late Uri vu;
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          vu = req.url;
+          return _json(const {'items': [], 'total': 0, 'next_offset': null});
+        }),
+      ));
+
+      final page = await repo.campus(query: 'ali', offset: 25, limit: 10);
+
+      expect(vu.queryParameters['q'], 'ali');
+      expect(vu.queryParameters['offset'], '25');
+      expect(vu.queryParameters['limit'], '10');
+      expect(page.items, isEmpty);
+      expect(page.nextOffset, isNull);
+    });
+
+    test('campus lit le total et la page suivante', () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json(const {
+              'items': [
+                {'id': 'u1', 'first_name': 'Alice'},
+              ],
+              'total': 42,
+              'next_offset': 1,
+            })),
+      ));
+
+      final page = await repo.campus();
+      expect(page.total, 42);
+      expect(page.nextOffset, 1);
+      expect(page.items.single.firstName, 'Alice');
+    });
+
+    test('campus accepte encore une réponse en tableau (serveur ancien)',
+        () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json([
+              {'id': 'u1', 'first_name': 'Alice'},
+            ])),
+      ));
+
+      final page = await repo.campus();
+      expect(page.items.single.firstName, 'Alice');
+      expect(page.nextOffset, isNull);
+    });
+
+    test('bloquer puis débloquer visent les bonnes routes', () async {
+      final appels = <String>[];
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          appels.add('${req.method} ${req.url.path}');
+          return _json(const {'blocked': true});
+        }),
+      ));
+
+      await repo.block('u2');
+      await repo.unblock('u2');
+      expect(appels, ['POST /blocks/u2', 'DELETE /blocks/u2']);
+    });
+
+    test('signaler transmet le motif et les détails', () async {
+      Map<String, dynamic>? corps;
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          corps = jsonDecode(req.body) as Map<String, dynamic>;
+          return _json(const {'ok': true});
+        }),
+      ));
+
+      await repo.report('u2', 'harcelement', details: 'messages insistants');
+      expect(corps, {'reason': 'harcelement', 'details': 'messages insistants'});
+    });
+
+    test('la déconnexion efface le jeton même si le serveur ne répond pas',
+        () async {
+      final store = await _emptyStore();
+      await store.save('jeton');
+      final api = ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          if (req.url.path == '/auth/logout') {
+            return http.Response('{"error":"boum"}', 500);
+          }
+          return _json(const {'ok': true});
+        }),
+      );
+      final repo = Repository(api);
+
+      await repo.logOut();
+
+      expect(api.loggedIn, isFalse);
+    });
+
+    test('les réglages serveur sont lus, et ignorés si absents', () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json(const {
+              'alarm_radius_meters': 200,
+              'alarm_poll_seconds': 15,
+              'location_interval_seconds': 60,
+            })),
+      ));
+
+      final config = await repo.config();
+      expect(config?.alarmRadiusMeters, 200);
+      expect(config?.alarmPollSeconds, 15);
     });
   });
 }

@@ -29,8 +29,9 @@ des choix se fait entièrement côté serveur.
    champs posés dessus, un seul bouton plein (voir `lib/core/widgets/`).
 2. **Compte** — email + mot de passe, jeton JWT valable 30 jours et conservé
    dans le Keystore Android. Mot de passe oublié : code à 6 chiffres par email.
-3. **Découvrir** — l'annuaire du campus. Tu choisis / retires des personnes.
-   Personne n'est notifié.
+3. **Découvrir** — l'annuaire du campus, cherchable et paginé. Tu choisis /
+   retires des personnes. Personne n'est notifié. Chaque personne a un menu
+   pour la **bloquer** ou la **signaler**.
 4. **Position** — quand l'app est ouverte, la position est envoyée toutes les
    2 minutes (précision haute). Elle n'est jamais renvoyée à un autre
    utilisateur, et elle est purgée au bout de 24 h.
@@ -86,7 +87,26 @@ Sur un téléphone physique, utilise l'IP locale de ton ordinateur
 > ⚠️ Sans `--dart-define=API_URL=...`, l'app affiche un message explicite au
 > lieu d'échouer silencieusement (voir `lib/core/config.dart`).
 
-### 3. Documentation de l'API
+### 3. Les tests
+
+```bash
+# Côté app : 31 tests (modèles, client HTTP, écrans)
+flutter analyze          # doit afficher « No issues found! »
+flutter test
+
+# Côté API : 20 cas de bout en bout contre une vraie PostgreSQL
+cd api
+createdb ding_test
+TEST_DATABASE_URL=postgres://user:pass@localhost:5432/ding_test npm test
+```
+
+Le test de l'API démarre le serveur lui-même sur le port 3100, vide la base
+`ding_test` puis rejoue le parcours complet : inscription, annuaire paginé,
+choix réciproques, alarme à 150 m, une alarme par heure, blocage, signalement,
+révocation du jeton. C'est le filet de sécurité du SQL — il n'y en avait aucun
+avant la 0.3.0.
+
+### 4. Documentation de l'API
 
 Voir [`api/README.md`](api/README.md) : routes, limites de débit, variables
 d'environnement, déploiement Render + Neon.
@@ -138,15 +158,20 @@ logo/              déclinaisons du symbole Ding
 
 ## Limites connues
 
-- **Premier plan uniquement.** La position n'est envoyée que lorsque l'app est
-  ouverte ; l'alarme ne sonne donc pas si les deux téléphones sont en poche,
-  écran éteint. C'est la limite n°1 du produit — le chantier est décrit pas à
-  pas dans [`docs/alarme-en-arriere-plan.md`](docs/alarme-en-arriere-plan.md).
+- **Arrière-plan partiel.** Depuis la 0.3.1, un service de premier plan suit
+  la position : l'alarme sonne écran éteint et app en arrière-plan. Elle ne
+  sonne pas si l'app est **quittée** (Android détruit alors le service). La
+  suite — isolate séparé ou push FCM — est décrite dans
+  [`docs/alarme-en-arriere-plan.md`](docs/alarme-en-arriere-plan.md).
 - **Pas de temps réel.** Le client interroge l'API toutes les 20 s. Une alarme
   peut donc arriver jusqu'à 20 s après le croisement.
 - **Une alarme par heure et par paire** (`bucket`), pour éviter le harcèlement.
 - **Annuaire ouvert par défaut** : tous les inscrits visibles, sauf ceux qui
   s'en retirent. Le secret porte sur les choix, pas sur l'existence des comptes.
+- **Les signalements sont enregistrés, pas encore traités.** La table
+  `reports` garde le motif et la date ; aucune interface d'administration ne
+  les liste. À faire avant d'ouvrir le campus au-delà d'un cercle de
+  confiance.
 - **Pas de vérification d'email** : rien n'empêche de s'inscrire avec l'adresse
   de quelqu'un d'autre. À traiter avant d'activer `ALLOWED_EMAIL_DOMAIN`.
 - **Cold start Render** : l'API gratuite se met en veille ; le premier appel
@@ -156,12 +181,14 @@ logo/              déclinaisons du symbole Ding
 
 ## Feuille de route
 
-- [ ] Service de premier plan + notification prioritaire
-      ([guide](docs/alarme-en-arriere-plan.md))
+- [x] Service de premier plan pour la position
+      (l'alarme sonne écran éteint, [guide](docs/alarme-en-arriere-plan.md))
+- [ ] Suivi même quand l'app est quittée (isolate séparé)
+- [ ] Notification prioritaire (écran qui s'allume comme un appel)
 - [ ] Notifications push FCM pour remplacer le polling 20 s
 - [ ] Vérification d'email
-- [ ] Pagination / recherche côté serveur pour l'annuaire
-- [ ] Signalement et blocage d'un profil
+- [x] Pagination / recherche côté serveur pour l'annuaire
+- [x] Signalement et blocage d'un profil
 - [ ] CGU + politique de confidentialité + âge minimum
 - [ ] Polices embarquées plutôt que téléchargées par `google_fonts`
 - [ ] Signature de l'APK (`key.properties` + secret GitHub)

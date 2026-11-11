@@ -1,0 +1,125 @@
+Ding — mise à jour 0.3.1
+========================
+
+Cette archive REMPLACE celle de la 0.3.0 : elle contient les deux d'un coup
+(refonte des écrans intérieurs + suivi en arrière-plan). Tu n'as donc qu'une
+seule mise à jour à appliquer.
+
+Le seul vrai changement de produit de cette version : l'alarme peut enfin
+sonner écran éteint.
+
+
+CE QUI CHANGE EN 0.3.1
+----------------------
+
+- Le suivi de la position vit dans un service de premier plan Android
+  (notification permanente « Ding veille »). L'app continue d'envoyer ta
+  position quand elle est en arrière-plan ou l'écran éteint.
+- Un battement toutes les 2 minutes renvoie la dernière position connue, même
+  immobile. Sans lui, rester assis une demi-heure rendait les coordonnées
+  périmées côté serveur et le croisement ne se faisait plus.
+- L'intervalle d'envoi vient de GET /config : plus de constante recopiée.
+- Un bandeau explique, quand c'est le cas, pourquoi il faut autoriser la
+  position « Toujours ». Il est escamotable.
+- 5 tests unitaires de plus (36 au total).
+
+
+CE QUE ÇA NE FAIT PAS ENCORE
+----------------------------
+
+L'alarme ne sonne pas si l'app est QUITTÉE (bouton retour, balayage dans les
+tâches récentes) : Android détruit alors le service. Il faut pour ça un isolate
+séparé ou des push FCM — les deux demandent un téléphone et un projet Firebase
+pour être vérifiés, donc ils ne sont pas dans cette version.
+Voir docs/alarme-en-arriere-plan.md, §1 bis et §7.
+
+
+ORDRE DE DÉPLOIEMENT
+--------------------
+
+1. L'API d'abord (elle n'a pas changé depuis la 0.3.0, mais si tu n'as pas
+   encore appliqué la 0.3.0, c'est le moment : l'app 0.3.1 attend les routes
+   /blocks, /reports, /config et /auth/logout).
+2. L'app ensuite : copie les fichiers, puis
+
+       flutter pub get
+       flutter analyze          # doit afficher « No issues found! »
+       flutter test             # doit afficher 36 tests au vert
+       flutter build apk --release
+
+3. Si tu régénères le dossier android/ avec tool/setup_android.sh, il posera
+   les permissions à jour (dont ACCESS_BACKGROUND_LOCATION).
+
+
+AVERTISSEMENT PLAY STORE
+------------------------
+
+ACCESS_BACKGROUND_LOCATION n'est pas une permission anodine : Google demande
+une déclaration « Position en arrière-plan » et une vidéo montrant l'usage.
+L'argument à donner est simple et vrai : sans elle, l'app ne peut pas remplir
+sa seule fonction (prévenir quand quelqu'un qui t'a choisi passe tout près).
+Si tu publies d'abord en test fermé, rien à déclarer.
+
+
+FICHIERS (34)
+-------------
+
+Nouveaux en 0.3.1
+  lib/core/location_service.dart            le suivi + le battement
+  test/location_service_test.dart           5 tests sur la règle d'envoi
+
+Modifiés en 0.3.1
+  lib/features/home/home_shell.dart         utilise le service, 3 bannières
+  tool/android/AndroidManifest.xml          + ACCESS_BACKGROUND_LOCATION
+  tool/setup_android.sh                     vérifie la nouvelle permission
+  docs/alarme-en-arriere-plan.md            réécrit : fait / à faire / test
+  CHANGELOG.md                              entrée 0.3.1
+  README.md                                 limite « arrière-plan partiel »
+  pubspec.yaml                              0.3.1+6
+
+Refonte des écrans intérieurs (0.3.0)
+  lib/core/theme.dart                       cartes cerclées, dialogues, feuilles
+  lib/core/widgets/initials_avatar.dart     initiale teintée (6 teintes)
+  lib/core/widgets/empty_state.dart         états vides explicatifs
+  lib/core/providers.dart                   campus, blocages, badges, config
+  lib/data/models.dart                      CampusPage, ServerConfig, Profile
+  lib/data/repository.dart                  annuaire paginé, blocage, signalement
+  lib/data/api_client.dart                  routes 0.3.0 + erreurs lisibles
+  lib/features/discover/discover_page.dart  recherche débouncée, défilement infini
+  lib/features/alarm/alarms_page.dart       groupées par jour, badge « Nouveau »
+  lib/features/alarm/ring_page.dart         ondes, son, haptique, « J'y vais »
+  lib/features/profile/profile_page.dart    profil, blocages, déconnexion
+  lib/features/home/home_shell.dart         badge d'onglet, remontée à zéro
+
+API (0.3.0)
+  api/src/index.js                          /blocks, /reports, /config,
+                                            /auth/logout, /profiles paginé
+  api/src/db.js                             tables blocks, reports,
+                                            revoked_tokens + purge
+  api/test/parcours.test.js                 20 tests d'intégration
+  api/README.md                             table des routes
+  api/package.json                          0.3.0
+  api/.env.example                          quotas, intervalles
+
+Tests et intégration continue
+  test/support/fake_api.dart                faux serveur pour les tests d'écran
+  test/api_client_test.dart                 15 cas
+  test/models_test.dart (inchangé)
+  test/auth_page_test.dart                  connexion / inscription
+  test/onboarding_page_test.dart            les 3 pages d'accueil
+  test/discover_page_test.dart              annuaire, recherche, blocage
+  test/alarms_page_test.dart                alarmes, badge, page qui sonne
+  .github/workflows/api.yml                 npm test sur la base ding_test
+  .github/workflows/build-apk.yml           flutter analyze bloquant
+
+
+TESTS
+-----
+
+Côté app      : PUB_CACHE=... flutter analyze  → « No issues found! »
+                PUB_CACHE=... flutter test       → 36 tests au vert
+Côté API      : npm test                        → 20 tests au vert
+                (TEST_DATABASE_URL=postgres://ding:ding@127.0.0.1:5432/ding_test)
+
+Sur téléphone, le protocole de vérification du suivi en arrière-plan est dans
+docs/alarme-en-arriere-plan.md, §1 bis.

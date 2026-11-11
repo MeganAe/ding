@@ -1,15 +1,38 @@
 # Faire sonner l'alarme quand l'app est fermée
 
-> **État actuel** : l'app suit la position **uniquement au premier plan**.
-> Écran éteint ou app en arrière-plan, plus rien n'est envoyé, et l'alarme ne
-> peut pas sonner. C'est la limite n°1 du produit, et c'est un chantier
-> Android, pas un simple réglage Flutter.
+> **État actuel (0.3.1)** : l'app suit la position dans un **service de
+> premier plan** Android (notification permanente, `GeolocatorLocationService`).
+> Résultat : l'alarme peut sonner **écran éteint et app en arrière-plan**.
+> Elle ne sonne toujours pas si l'utilisateur **quitte** l'app (bouton retour,
+> balayage dans les tâches récentes) : Android détruit alors le service.
+> La suite est décrite en §1 bis et §7.
 
-Ce document décrit précisément ce qu'il faut faire, dans quel ordre, et ce qui
-peut mal se passer. Il n'est pas encore appliqué au code : les deux plugins
-concernés (`flutter_foreground_task`, `flutter_local_notifications`) demandent
-d'être écrits avec le compilateur sous les yeux, faute de quoi une signature
-qui a changé entre deux versions casse tout le build.
+## 1 bis. Ce qui est fait, et comment le vérifier sur un téléphone
+
+Le suivi vit dans `lib/core/location_service.dart` :
+
+- un flux de positions (précision haute, `distanceFilter` 15 m) qui envoie dès
+  qu'on s'est déplacé de 100 m ;
+- un **battement** toutes les 2 minutes (valeur venue de `GET /config`) qui
+  renvoie la dernière position connue. Sans lui, rester assis une demi-heure
+  rendrait les coordonnées périmées et le croisement ne se ferait plus ;
+- une notification permanente « Ding veille » : sans elle, Android arrête
+  l'app au bout de quelques minutes.
+
+Protocole, sur un vrai téléphone (l'émulateur ne rejoue pas correctement la
+mise en veille) :
+
+1. Installe l'APK, connecte-toi, autorise la position.
+2. Dans les réglages Android de Ding → Autorisations → Position, choisis
+   **Toujours autoriser**. Sans ça, l'app affiche un bandeau et le suivi
+   s'arrête dès que l'app passe en arrière-plan.
+3. Verrouille l'écran, laisse le téléphone tranquille 5 minutes.
+4. Côté serveur, vérifie que la position est fraîche :
+   `select user_id, updated_at from locations;` — `updated_at` doit bouger
+   toutes les 2 minutes.
+5. Passe l'app en arrière-plan (bouton accueil), répète l'étape 4.
+6. Tue l'app (balayage dans les tâches récentes) : la mise à jour s'arrête.
+   C'est la limite assumée de cette version.
 
 ---
 

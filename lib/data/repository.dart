@@ -31,7 +31,17 @@ class Repository {
     await _api.setToken((res as Map)['token'] as String);
   }
 
-  Future<void> logOut() => _api.setToken(null);
+  /// Déconnexion : le jeton est d'abord révoqué côté serveur (utile si le
+  /// téléphone a été perdu), puis effacé localement — même si le réseau a
+  /// coupé entre les deux, parce qu'on veut pouvoir se déconnecter hors ligne.
+  Future<void> logOut() async {
+    try {
+      await _api.request('POST', '/auth/logout');
+    } on ApiException {
+      // Rien à faire : le jeton local s'en va de toute façon.
+    }
+    await _api.setToken(null);
+  }
 
   /// Demande l'envoi d'un code à 6 chiffres. L'API répond toujours OK, même
   /// si l'email est inconnu (pour ne pas révéler quels comptes existent).
@@ -62,13 +72,31 @@ class Repository {
 
   // ───────────── Profils ─────────────
 
-  Future<List<Profile>> campus() async {
-    final rows = await _api.request('GET', '/profiles') as List<dynamic>;
-    return rows
-        .whereType<Map<String, dynamic>>()
-        .map(Profile.fromMap)
-        .where((p) => p.id.isNotEmpty)
-        .toList();
+  /// Une page de l'annuaire. `query` filtre sur le début du prénom.
+  Future<CampusPage> campus({
+    String query = '',
+    int offset = 0,
+    int limit = 25,
+  }) async {
+    final res = await _api.request('GET', '/profiles', query: {
+      'q': query,
+      'offset': '$offset',
+      'limit': '$limit',
+    });
+
+    if (res is Map<String, dynamic>) return CampusPage.fromMap(res);
+
+    // Serveur pas encore mis à jour (ancienne réponse : un tableau nu).
+    // On l'accepte pour que l'app puisse sortir avant l'API.
+    if (res is List) {
+      final items = res
+          .whereType<Map<String, dynamic>>()
+          .map(Profile.fromMap)
+          .where((p) => p.id.isNotEmpty)
+          .toList();
+      return CampusPage(items: items, total: items.length);
+    }
+    return const CampusPage(items: [], total: 0);
   }
 
   Future<Profile?> me() async {
@@ -117,6 +145,33 @@ class Repository {
     }
   }
 
+  // ───────────── Blocage et signalement ─────────────
+
+  /// Les personnes que j'ai bloquées, avec leur prénom (écran Profil).
+  Future<List<Profile>> blocked() async {
+    final rows = await _api.request('GET', '/blocks') as List<dynamic>;
+    return rows
+        .whereType<Map<String, dynamic>>()
+        .map(Profile.fromMap)
+        .where((p) => p.id.isNotEmpty)
+        .toList();
+  }
+
+  /// Bloque quelqu'un : la personne disparaît de l'annuaire, les choix
+  /// mutuels sont effacés et les alarmes de la paire supprimées.
+  Future<void> block(String id) => _api.request('POST', '/blocks/$id');
+
+  Future<void> unblock(String id) =>
+      _api.request('DELETE', '/blocks/$id');
+
+  /// Signale un profil. Motifs acceptés par l'API : `harcelement`,
+  /// `faux_profil`, `intimidation`, `autre`.
+  Future<void> report(String id, String reason, {String? details}) =>
+      _api.request('POST', '/reports/$id', body: {
+        'reason': reason,
+        if (details != null && details.isNotEmpty) 'details': details,
+      });
+
   // ───────────── Position et alarmes ─────────────
 
   Future<void> sendLocation(double lat, double lng) async {
@@ -130,5 +185,15 @@ class Repository {
         .map(AlarmItem.tryFromMap)
         .whereType<AlarmItem>()
         .toList();
+  }
+
+  /// Réglages publics de l'API. `null` si le serveur est trop ancien :
+  /// l'app garde alors ses propres valeurs.
+  Future<ServerConfig?> config() async {
+    try {
+      return ServerConfig.tryFromMap(await _api.request('GET', '/config'));
+    } on ApiException {
+      return null;
+    }
   }
 }

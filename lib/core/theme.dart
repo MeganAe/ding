@@ -12,6 +12,10 @@ class DingColors {
   static const signal = Color(0xFFD32F2F);
   static const mist = Color(0xFFDDE3EE);
   static const slate = Color(0xFF5B6378);
+  // Surfaces : les cartes se détachent du papier par un blanc très légèrement
+  // froid et un filet, jamais par une ombre (la palette n'a pas d'ombre).
+  static const card = Color(0xFFFFFFFF);
+  static const line = Color(0xFFE3E8F1);
 }
 
 ThemeData buildTheme() {
@@ -54,6 +58,10 @@ ThemeData buildTheme() {
   );
 
   final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(14));
+  final cardShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(18),
+    side: const BorderSide(color: DingColors.line),
+  );
 
   return base.copyWith(
     textTheme: text,
@@ -95,6 +103,35 @@ ThemeData buildTheme() {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: DingColors.ink, width: 1.5),
       ),
+    ),
+    cardTheme: CardThemeData(
+      color: DingColors.card,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: cardShape,
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: DingColors.paper,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      titleTextStyle: text.titleLarge,
+      contentTextStyle: text.bodyMedium,
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: DingColors.paper,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+    ),
+    dividerTheme: const DividerThemeData(
+      color: DingColors.line,
+      thickness: 1,
+      space: 1,
+    ),
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: DingColors.ink,
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: DingColors.paper,

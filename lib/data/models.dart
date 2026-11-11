@@ -10,6 +10,7 @@ class Profile {
     required this.firstName,
     this.faculty,
     this.promotion,
+    this.email,
     this.discoverable = true,
   });
 
@@ -17,6 +18,10 @@ class Profile {
   final String firstName;
   final String? faculty;
   final String? promotion;
+
+  /// Renseigné uniquement pour mon propre profil (/me) : l'API ne le renvoie
+  /// jamais pour les autres.
+  final String? email;
 
   /// false quand l'utilisateur a choisi de ne pas apparaître dans l'annuaire.
   final bool discoverable;
@@ -28,6 +33,7 @@ class Profile {
         firstName: _str(m['first_name']) ?? '',
         faculty: _str(m['faculty']),
         promotion: _str(m['promotion']),
+        email: _str(m['email']),
         discoverable: m['discoverable'] is bool ? m['discoverable'] as bool : true,
       );
 
@@ -36,6 +42,7 @@ class Profile {
         firstName: firstName,
         faculty: faculty,
         promotion: promotion,
+        email: email,
         discoverable: discoverable ?? this.discoverable,
       );
 
@@ -75,6 +82,70 @@ class AlarmItem {
       otherId: other,
       otherName: _str(m['other_name']) ?? '',
       otherFaculty: _str(m['other_faculty']),
+    );
+  }
+}
+
+
+/// Une page de l'annuaire : les profils, le total, et où continuer.
+class CampusPage {
+  const CampusPage({
+    required this.items,
+    required this.total,
+    this.nextOffset,
+  });
+
+  final List<Profile> items;
+
+  /// Nombre de profils correspondant à la recherche, pas seulement à la page.
+  final int total;
+
+  /// `null` quand tout a été chargé.
+  final int? nextOffset;
+
+  static CampusPage fromMap(Map<String, dynamic> m) {
+    final rows = m['items'];
+    final items = rows is List
+        ? rows
+            .whereType<Map<String, dynamic>>()
+            .map(Profile.fromMap)
+            .where((p) => p.id.isNotEmpty)
+            .toList()
+        : <Profile>[];
+    final total = m['total'] is int ? m['total'] as int : items.length;
+    final next = m['next_offset'];
+    return CampusPage(
+      items: items,
+      total: total,
+      nextOffset: next is int ? next : null,
+    );
+  }
+}
+
+/// Réglages publics renvoyés par `GET /config`.
+class ServerConfig {
+  const ServerConfig({
+    required this.alarmRadiusMeters,
+    required this.alarmPollSeconds,
+    required this.locationIntervalSeconds,
+  });
+
+  final int alarmRadiusMeters;
+  final int alarmPollSeconds;
+  final int locationIntervalSeconds;
+
+  static ServerConfig? tryFromMap(dynamic m) {
+    if (m is! Map) return null;
+    final radius = m['alarm_radius_meters'];
+    if (radius is! num) return null;
+    return ServerConfig(
+      alarmRadiusMeters: radius.round(),
+      alarmPollSeconds: m['alarm_poll_seconds'] is num
+          ? (m['alarm_poll_seconds'] as num).round()
+          : 20,
+      locationIntervalSeconds: m['location_interval_seconds'] is num
+          ? (m['location_interval_seconds'] as num).round()
+          : 120,
     );
   }
 }

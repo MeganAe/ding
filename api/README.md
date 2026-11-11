@@ -10,12 +10,18 @@ API REST Node.js + PostgreSQL. Le matching se fait côté serveur : aucune route
 | POST | `/auth/login` | Se connecter (`email`, `password`) |
 | POST | `/auth/forgot` | Demander un code de réinitialisation (`email`) |
 | POST | `/auth/reset` | Échanger le code contre un mot de passe (`email`, `code`, `password`) |
+| POST | `/auth/logout` | Révoquer le jeton courant (déconnexion côté serveur) |
+| GET | `/config` | Réglages publics : rayon d'alarme, intervalles |
 | GET / PUT / DELETE | `/me` | Lire / modifier / supprimer mon compte |
-| GET | `/profiles` | Annuaire du campus (champs publics) |
+| GET | `/profiles` | Annuaire paginé : `q`, `limit` (1–100), `offset` → `{items, total, next_offset}` |
 | GET | `/crushes` | Mes choix uniquement |
 | POST | `/crushes/:id` | Choisir quelqu'un (idempotent) |
 | DELETE | `/crushes/:id` | Retirer un choix (idempotent) |
 | POST | `/crushes/:id/toggle` | *(déprécié)* inverse l'état — conservé pour les anciennes versions de l'app |
+| GET | `/blocks` | Personnes que j'ai bloquées |
+| POST | `/blocks/:id` | Bloquer : retire de l'annuaire, efface les choix et les alarmes de la paire |
+| DELETE | `/blocks/:id` | Débloquer |
+| POST | `/reports/:id` | Signaler (`reason` : `harcelement`, `faux_profil`, `intimidation`, `autre`) |
 | POST | `/location` | Envoyer ma position (`lat`, `lng`) |
 | GET | `/alarms` | Mes alarmes |
 | GET | `/health` | Vérification (pour l'hébergeur) |

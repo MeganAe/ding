@@ -6,16 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
+import '../../core/location_service.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models.dart';
 import '../alarm/alarms_page.dart';
 import '../discover/discover_page.dart';
 import '../profile/profile_page.dart';
-
-/// Ce qui empêche l'envoi de la position, s'il y a lieu.
-enum _LocProblem { none, service, permission }
 
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
@@ -32,8 +29,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
   /// de son onglet, pas au démarrage de l'app.
   final Set<int> _built = {0};
 
-  Timer? _timer;
-  _LocProblem _locProblem = _LocProblem.none;
+  /// Incrémenté à chaque visite de l'onglet « Alarmes » : la page est
+  /// reconstruite, ce qui remet à zéro les badges « Nouveau » et le compteur
+  /// de la barre du bas, et relit la date de dernière visite.
+  int _alarmsEpoch = 0;
 
   /// Alarmes en attente d'être montrées : si trois arrivent en même temps,
   /// on les présente l'une après l'autre au lieu d'en perdre deux.
@@ -45,90 +44,40 @@ class _HomeShellState extends ConsumerState<HomeShell>
   /// existantes sans les faire sonner au démarrage.
   bool _firstSyncDone = false;
 
+  /// L'utilisateur a repoussé le rappel « autorise Toujours » : on ne le
+  /// répète pas à chaque retour dans l'app.
+  bool _hideBackgroundHint = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _sendLocation();
-    _startTimer();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
     super.dispose();
   }
 
-  /// L'appli ne suit la position que lorsqu'elle est au premier plan :
-  /// on coupe le minuteur en arrière-plan (batterie, données) et on repart
-  /// immédiatement au retour, pour ne pas rater une alarme.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _sendLocation();
-      _startTimer();
-      ref.invalidate(alarmsProvider);
-    } else {
-      _timer?.cancel();
-      _timer = null;
-    }
+    if (state != AppLifecycleState.resumed) return;
+    // Le système a pu arrêter le suivi : on le relance (start() est idempotent)
+    // et on redemande les alarmes tout de suite, sans attendre le cycle.
+    unawaited(ref.read(locationServiceProvider.notifier).start());
+    ref.invalidate(alarmsProvider);
   }
 
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(Config.locationInterval, (_) => _sendLocation());
-  }
-
-  void _setProblem(_LocProblem p) {
-    if (!mounted || _locProblem == p) return;
-    setState(() => _locProblem = p);
-  }
-
-  /// V1 : la position est envoyée uniquement quand l'appli est ouverte.
-  Future<void> _sendLocation() async {
-    try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        _setProblem(_LocProblem.service);
-        return;
-      }
-
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever) {
-        _setProblem(_LocProblem.permission);
-        return;
-      }
-
-      // Précision haute : avec `medium` l'erreur de mesure (~100 m) est du
-      // même ordre que le rayon de l'alarme (150 m), ce qui fait sonner à
-      // tort ou pas du tout.
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 25),
-        ),
-      );
-      if (!mounted) return;
-      _setProblem(_LocProblem.none);
-      await ref.read(repositoryProvider).sendLocation(
-            pos.latitude,
-            pos.longitude,
-          );
-    } catch (_) {
-      // GPS, timeout ou réseau : on réessaiera au prochain cycle.
-    }
-  }
-
-  Future<void> _openSettings() async {
-    if (_locProblem == _LocProblem.service) {
+  Future<void> _openSettings(LocationStatus status) async {
+    if (status == LocationStatus.off) {
       await Geolocator.openLocationSettings();
     } else {
       await Geolocator.openAppSettings();
     }
+    // Au retour des réglages, on réessaie : la permission vient peut-être
+    // d'être accordée.
+    unawaited(ref.read(locationServiceProvider.notifier).restart());
   }
 
   /// Traite chaque nouvelle liste d'alarmes et alimente la file d'attente.
@@ -165,13 +114,26 @@ class _HomeShellState extends ConsumerState<HomeShell>
       if (list != null) _onAlarms(list);
     });
 
+    // Lire le service suffit à le démarrer (voir locationServiceProvider).
+    final location = ref.watch(locationServiceProvider);
+    final showBanner = switch (location) {
+      LocationStatus.off => true,
+      LocationStatus.denied => true,
+      LocationStatus.foregroundOnly => !_hideBackgroundHint,
+      _ => false,
+    };
+
     return Scaffold(
       body: Column(
         children: [
-          if (_locProblem != _LocProblem.none) _LocationBanner(
-            problem: _locProblem,
-            onOpenSettings: _openSettings,
-          ),
+          if (showBanner)
+            _LocationBanner(
+              status: location,
+              onOpenSettings: () => _openSettings(location),
+              onDismiss: location == LocationStatus.foregroundOnly
+                  ? () => setState(() => _hideBackgroundHint = true)
+                  : null,
+            ),
           Expanded(
             child: IndexedStack(
               index: _tab,
@@ -181,7 +143,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
                 else
                   const SizedBox.shrink(),
                 if (_built.contains(1))
-                  const AlarmsPage()
+                  AlarmsPage(key: ValueKey('alarmes-$_alarmsEpoch'))
                 else
                   const SizedBox.shrink(),
                 if (_built.contains(2))
@@ -198,19 +160,26 @@ class _HomeShellState extends ConsumerState<HomeShell>
         onDestinationSelected: (i) => setState(() {
           _tab = i;
           _built.add(i);
+          if (i == 1) _alarmsEpoch++;
         }),
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.favorite_border),
             selectedIcon: Icon(Icons.favorite),
             label: 'Découvrir',
           ),
           NavigationDestination(
-            icon: Icon(Icons.notifications_none),
-            selectedIcon: Icon(Icons.notifications),
+            icon: _AlarmBell(
+              count: ref.watch(newAlarmsCountProvider),
+              selected: false,
+            ),
+            selectedIcon: _AlarmBell(
+              count: ref.watch(newAlarmsCountProvider),
+              selected: true,
+            ),
             label: 'Alarmes',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.person_outline),
             selectedIcon: Icon(Icons.person),
             label: 'Profil',
@@ -224,15 +193,38 @@ class _HomeShellState extends ConsumerState<HomeShell>
 /// Sans position, l'alarme ne peut pas sonner : l'utilisateur doit le savoir,
 /// avec un moyen d'aller corriger le réglage.
 class _LocationBanner extends StatelessWidget {
-  const _LocationBanner({required this.problem, required this.onOpenSettings});
+  const _LocationBanner({
+    required this.status,
+    required this.onOpenSettings,
+    this.onDismiss,
+  });
 
-  final _LocProblem problem;
+  final LocationStatus status;
   final VoidCallback onOpenSettings;
+
+  /// Non nul seulement quand le rappel n'est pas bloquant (permission
+  /// « pendant l'usage ») : l'utilisateur peut le repousser.
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
-    final isService = problem == _LocProblem.service;
+
+    final (String texte, String action) = switch (status) {
+      LocationStatus.off => (
+          "Le GPS est coupé : l'alarme ne peut pas sonner.",
+          'Activer',
+        ),
+      LocationStatus.denied => (
+          "Sans accès à ta position, l'alarme ne peut pas sonner.",
+          'Autoriser',
+        ),
+      _ => (
+          "L'alarme ne sonne que si Ding est ouvert. Autorise « Toujours » "
+          'pour qu’elle sonne aussi écran éteint.',
+          'Réglages',
+        ),
+    };
 
     return Material(
       color: DingColors.mist,
@@ -242,25 +234,50 @@ class _LocationBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
           child: Row(
             children: [
-              const Icon(Icons.location_off_outlined,
-                  size: 20, color: DingColors.ink),
+              const Icon(
+                Icons.location_off_outlined,
+                size: 20,
+                color: DingColors.ink,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  isService
-                      ? 'Le GPS est coupé : l\'alarme ne peut pas sonner.'
-                      : 'Sans accès à ta position, l\'alarme ne peut pas sonner.',
+                  texte,
                   style: theme.bodySmall?.copyWith(color: DingColors.ink),
                 ),
               ),
-              TextButton(
-                onPressed: onOpenSettings,
-                child: Text(isService ? 'Activer' : 'Autoriser'),
-              ),
+              TextButton(onPressed: onOpenSettings, child: Text(action)),
+              if (onDismiss != null)
+                IconButton(
+                  tooltip: 'Plus tard',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 18),
+                  color: DingColors.slate,
+                  onPressed: onDismiss,
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// La cloche, avec le nombre d'alarmes reçues depuis la dernière visite.
+class _AlarmBell extends StatelessWidget {
+  const _AlarmBell({required this.count, required this.selected});
+
+  final int count;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon =
+        Icon(selected ? Icons.notifications : Icons.notifications_none);
+    if (count <= 0) return icon;
+    return Badge(
+      label: Text(count > 9 ? '9+' : '$count'),
+      child: icon,
     );
   }
 }

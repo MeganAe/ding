@@ -4,9 +4,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme.dart';
+import '../../core/widgets/initials_avatar.dart';
 import '../../data/api_client.dart';
 import '../../data/models.dart';
 
+/// Le profil et les réglages, dans une seule page organisée en sections.
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
 
@@ -71,9 +73,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
             promotion: _promotion.text.trim(),
             discoverable: _discoverable,
           );
-      // Le prénom apparaît aussi dans l'annuaire : on rafraîchit tout.
       ref.invalidate(myProfileProvider);
-      ref.invalidate(profilesProvider);
+      ref.invalidate(campusProvider);
       messenger.showSnackBar(
         const SnackBar(content: Text('Profil enregistré.')),
       );
@@ -85,6 +86,20 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       );
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unblock(Profile p) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(repositoryProvider).unblock(p.id);
+      ref.invalidate(blockedProvider);
+      ref.invalidate(campusProvider);
+      messenger.showSnackBar(
+        SnackBar(content: Text('${p.firstName} est débloqué.')),
+      );
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -176,115 +191,297 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
+    final me = ref.watch(myProfileProvider).valueOrNull;
+    final blocked = ref.watch(blockedProvider).valueOrNull ?? const <Profile>[];
 
     return SafeArea(
+      bottom: false,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('Profil', style: theme.headlineMedium),
-            const SizedBox(height: 4),
-            Text(
-              "Ta position n'est jamais visible par les autres. Elle sert seulement à vérifier si un choix réciproque est à proximité.",
-              style: theme.bodySmall,
-            ),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _name,
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(hintText: 'Prénom'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _faculty,
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(hintText: 'Faculté'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _promotion,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _save(),
-              decoration: const InputDecoration(hintText: 'Promotion'),
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: _busy ? null : _save,
-              child: _busy
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Enregistrer'),
-            ),
+            const SizedBox(height: 16),
 
-            const SizedBox(height: 32),
-            Text('Visibilité', style: theme.titleMedium),
-            const SizedBox(height: 4),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              value: _discoverable,
-              onChanged: (v) => setState(() => _discoverable = v),
-              title: Text(
-                'Apparaître dans l’annuaire',
-                style: theme.bodyMedium,
-              ),
-              subtitle: Text(
-                _discoverable
-                    ? 'Les autres étudiants peuvent te voir et te choisir.'
-                    : 'Personne ne peut te voir ni te choisir. Tu peux toujours '
-                        'choisir les autres.',
-                style: theme.bodySmall,
+            // Carte d'identité : qui je suis, et avec quelle adresse.
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    InitialsAvatar(
+                      name: _name.text.isEmpty ? (me?.firstName ?? '') : _name.text,
+                      radius: 28,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            me?.firstName.isNotEmpty == true
+                                ? me!.firstName
+                                : 'Toi',
+                            style: theme.titleLarge,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (me?.email != null)
+                            Text(
+                              me!.email!,
+                              style: theme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            if (_discoverable == false)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
+            const SizedBox(height: 24),
+
+            const _SectionLabel('Mon profil'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Field(label: 'Prénom', controller: _name),
+                    const SizedBox(height: 14),
+                    _Field(
+                      label: 'Faculté',
+                      controller: _faculty,
+                      hint: 'Ex. Médecine',
+                    ),
+                    const SizedBox(height: 14),
+                    _Field(
+                      label: 'Promotion',
+                      controller: _promotion,
+                      hint: 'Ex. L2',
+                      done: true,
+                      onSubmitted: _save,
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: _busy ? null : _save,
+                      child: _busy
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: DingColors.paper,
+                              ),
+                            )
+                          : const Text('Enregistrer'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            const _SectionLabel('Visibilité'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      value: _discoverable,
+                      onChanged: (v) => setState(() => _discoverable = v),
+                      title: Text(
+                        'Apparaître dans l’annuaire',
+                        style: theme.bodyMedium,
+                      ),
+                      subtitle: Text(
+                        _discoverable
+                            ? 'Les autres étudiants peuvent te voir et te choisir.'
+                            : 'Personne ne peut te voir ni te choisir. Tu peux '
+                                'toujours choisir les autres.',
+                        style: theme.bodySmall,
+                      ),
+                    ),
+                    if (!_discoverable)
+                      Text(
+                        'Pense à enregistrer pour appliquer.',
+                        style: theme.bodySmall
+                            ?.copyWith(color: DingColors.signal),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            const _SectionLabel('Personnes bloquées'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                child: blocked.isEmpty
+                    ? Text(
+                        'Personne n’est bloqué. Tu peux bloquer quelqu’un '
+                        'depuis l’annuaire.',
+                        style: theme.bodySmall,
+                      )
+                    : Column(
+                        children: [
+                          for (final p in blocked)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Row(
+                                children: [
+                                  InitialsAvatar(
+                                    name: p.firstName,
+                                    radius: 16,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      p.firstName,
+                                      style: theme.bodyMedium,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => _unblock(p),
+                                    child: const Text('Débloquer'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            const _SectionLabel('Ta vie privée'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
                 child: Text(
-                  'Pense à enregistrer pour appliquer.',
+                  'Ta position n’est jamais visible par les autres : elle sert '
+                  'seulement à vérifier qu’un choix réciproque est tout près. '
+                  'Elle est effacée au bout de 24 heures.',
                   style: theme.bodySmall,
                 ),
               ),
+            ),
+            const SizedBox(height: 24),
 
-            const SizedBox(height: 32),
-            Text('Outils', style: theme.titleMedium),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () => context.push(
-                '/ring',
-                extra: AlarmItem(
-                  id: 'test',
-                  createdAt: DateTime.now(),
-                  otherId: 'test',
-                  otherName: 'Quelqu’un',
-                ),
+            const _SectionLabel('Le compte'),
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.notifications_active_outlined),
+                    title: const Text("Tester l'alarme"),
+                    subtitle: const Text("Voir l'écran qui sonne, sans attendre."),
+                    onTap: () => context.push(
+                      '/ring',
+                      extra: AlarmItem(
+                        id: 'test',
+                        createdAt: DateTime.now(),
+                        otherId: 'test',
+                        otherName: 'Quelqu’un',
+                      ),
+                    ),
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: const Text('Me déconnecter'),
+                    onTap: _busy ? null : _confirmLogout,
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.delete_outline,
+                      color: DingColors.signal,
+                    ),
+                    title: const Text(
+                      'Supprimer mon compte',
+                      style: TextStyle(color: DingColors.signal),
+                    ),
+                    onTap: _busy ? null : _confirmDelete,
+                  ),
+                ],
               ),
-              child: const Text("Tester l'alarme"),
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _busy ? null : _confirmLogout,
-              child: const Text('Me déconnecter'),
-            ),
-            const SizedBox(height: 32),
-            TextButton(
-              style: TextButton.styleFrom(
-                foregroundColor: DingColors.signal,
-                minimumSize: const Size.fromHeight(44),
-              ),
-              onPressed: _busy ? null : _confirmDelete,
-              child: const Text('Supprimer mon compte'),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: Text(
+        text.toUpperCase(),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              letterSpacing: 1.1,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
+              color: DingColors.slate,
+            ),
+      ),
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.label,
+    required this.controller,
+    this.hint,
+    this.done = false,
+    this.onSubmitted,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String? hint;
+  final bool done;
+  final VoidCallback? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.bodySmall?.copyWith(
+            color: DingColors.ink,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: done ? TextInputAction.done : TextInputAction.next,
+          onSubmitted: done && onSubmitted != null ? (_) => onSubmitted!() : null,
+          decoration: InputDecoration(hintText: hint),
+        ),
+      ],
     );
   }
 }

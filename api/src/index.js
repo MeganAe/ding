@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
@@ -9,6 +9,8 @@ import { sendMail, resetCodeEmail } from './mailer.js';
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const RADIUS = Number(process.env.ALARM_RADIUS_METERS || 150);
+const alarmPollSeconds = Number(process.env.ALARM_POLL_SECONDS || 20);
+const locationIntervalSeconds = Number(process.env.LOCATION_INTERVAL_SECONDS || 120);
 const DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || '').trim().toLowerCase();
 
 if (!JWT_SECRET || !process.env.DATABASE_URL) {
@@ -39,15 +41,20 @@ app.use((req, res, next) => {
 });
 
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
-const sign = (id) => jwt.sign({ sub: id }, JWT_SECRET, { expiresIn: '30d' });
+// `jti` = identifiant unique du jeton : c'est ce qui permet de le révoquer
+// (déconnexion, téléphone perdu) sans changer le secret de signature.
+const sign = (id) =>
+  jwt.sign({ sub: id, jti: randomUUID() }, JWT_SECRET, { expiresIn: '30d' });
 // Retire aussi les caractères de contrôle (retours à la ligne, NUL…) qui
 // polluent les logs et peuvent casser l'affichage côté app.
 const clean = (v, max) =>
   String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
 
+// Les quotas sont réglables par l'environnement : les tests de parcours créent
+// beaucoup de comptes en quelques secondes, la production garde les défauts.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: Number(process.env.AUTH_RATE_LIMIT || 30),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives. Réessaie dans quelques minutes.' },
@@ -58,7 +65,7 @@ const authLimiter = rateLimit({
 // les profils sans aucune limite.
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 240,
+  limit: Number(process.env.API_RATE_LIMIT || 240),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes. Patiente un instant.' },
@@ -68,7 +75,7 @@ const apiLimiter = rateLimit({
 // une position toutes les 2 minutes, soit 0,5 requête/min).
 const locationLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 20,
+  limit: Number(process.env.LOCATION_RATE_LIMIT || 20),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de mises à jour de position.' },
@@ -78,16 +85,41 @@ const locationLimiter = rateLimit({
 // n'existe pas, pour empêcher l'énumération des comptes par timing.
 const DUMMY_HASH = '$2a$10$mBtYAfN3ZSYyJYKi7F1nU.8qP0kkMA5dSAsamBurVrrsVeE0k/mhe';
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Non connecté.' });
+
+  let payload;
   try {
-    req.uid = jwt.verify(token, JWT_SECRET).sub;
-    next();
+    payload = jwt.verify(token, JWT_SECRET);
   } catch {
-    res.status(401).json({ error: 'Session expirée. Reconnecte-toi.' });
+    return res.status(401).json({ error: 'Session expirée. Reconnecte-toi.' });
   }
+
+  // Les jetons émis avant l'arrivée des jetons révocables n'ont pas de jti :
+  // on les laisse passer (ils expireront d'eux-mêmes), sinon une mise à jour
+  // du serveur déconnecterait tout le monde d'un coup.
+  if (payload.jti) {
+    try {
+      const { rowCount } = await pool.query(
+        'select 1 from revoked_tokens where jti = $1',
+        [payload.jti],
+      );
+      if (rowCount > 0) {
+        return res
+          .status(401)
+          .json({ error: 'Session fermée. Reconnecte-toi.' });
+      }
+    } catch (e) {
+      return next(e);
+    }
+  }
+
+  req.uid = payload.sub;
+  req.jti = payload.jti ?? null;
+  req.tokenExp = payload.exp ?? null;
+  next();
 }
 
 /**
@@ -105,6 +137,11 @@ async function checkAlarms(uid) {
      join locations me on me.user_id = c1.from_user
      join locations o on o.user_id = c1.to_user
      where c1.from_user = $1
+       and not exists (
+         select 1 from blocks b
+         where (b.user_id = c1.from_user and b.blocked_id = c1.to_user)
+            or (b.user_id = c1.to_user and b.blocked_id = c1.from_user)
+       )
        and me.updated_at > now() - interval '15 minutes'
        and o.updated_at > now() - interval '15 minutes'
        and 2 * 6371000 * asin(least(1, sqrt(
@@ -127,6 +164,17 @@ app.get('/health', async (_req, res) => {
     console.error('Health check : base injoignable', e.message);
     res.status(503).json({ ok: false });
   }
+});
+
+// Réglages publics : l'app les lit au démarrage au lieu de garder sa propre
+// copie du rayon d'alarme et des intervalles. Si l'API change un jour de
+// valeur, les téléphones suivent sans mise à jour.
+app.get('/config', (_req, res) => {
+  res.json({
+    alarm_radius_meters: RADIUS,
+    alarm_poll_seconds: Math.round(alarmPollSeconds),
+    location_interval_seconds: Math.round(locationIntervalSeconds),
+  });
 });
 
 // ───────────── Authentification ─────────────
@@ -290,12 +338,29 @@ app.post('/auth/reset', authLimiter, wrap(async (req, res) => {
   res.json({ ok: true, token: sign(row.user_id) });
 }));
 
+/**
+ * Déconnexion : le jeton est révoqué côté serveur, donc il ne sert plus à
+ * rien même si quelqu'un l'a copié (téléphone perdu, sauvegarde volée).
+ */
+app.post('/auth/logout', auth, apiLimiter, wrap(async (req, res) => {
+  if (req.jti) {
+    await pool.query(
+      `insert into revoked_tokens (jti, user_id, expires_at)
+       values ($1, $2, to_timestamp($3))
+       on conflict do nothing`,
+      [req.jti, req.uid, req.tokenExp ?? Math.floor(Date.now() / 1000) + 60],
+    );
+  }
+  res.json({ ok: true });
+}));
+
 // ───────────── Profil ─────────────
-const PUBLIC_FIELDS = 'id, first_name, faculty, promotion, discoverable';
+// L'email n'est jamais exposé aux autres : il n'apparaît que dans /me.
+const PRIVATE_FIELDS = 'id, email, first_name, faculty, promotion, discoverable';
 
 app.get('/me', auth, apiLimiter, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `select ${PUBLIC_FIELDS} from users where id = $1`,
+    `select ${PRIVATE_FIELDS} from users where id = $1`,
     [req.uid],
   );
   if (rows.length === 0) return res.status(404).json({ error: 'Compte introuvable.' });
@@ -344,16 +409,59 @@ app.delete('/me', auth, apiLimiter, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Annuaire du campus : champs publics uniquement.
+/**
+ * Annuaire du campus : champs publics uniquement, par pages.
+ *
+ * - `q`      : début du prénom (insensible à la casse). Vide = tout.
+ * - `limit`  : 1 à 100, 50 par défaut.
+ * - `offset` : à passer avec le `next_offset` de la page précédente.
+ *
+ * Les personnes bloquées (dans un sens ou dans l'autre) n'apparaissent pas.
+ */
 app.get('/profiles', auth, apiLimiter, wrap(async (req, res) => {
-  const { rows } = await pool.query(
-    `select id, first_name, faculty, promotion
-     from users
-     where id <> $1 and first_name <> '' and discoverable
-     order by first_name limit 500`,
-    [req.uid],
+  const q = clean(req.query.q, 50).toLowerCase();
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const params = [req.uid];
+  const where = [
+    'users.id <> $1',
+    "users.first_name <> ''",
+    'users.discoverable',
+    `not exists (
+       select 1 from blocks b
+       where (b.user_id = $1 and b.blocked_id = users.id)
+          or (b.user_id = users.id and b.blocked_id = $1)
+     )`,
+  ];
+  if (q) {
+    params.push(`${q}%`);
+    where.push(`lower(users.first_name) like $${params.length}`);
+  }
+  const filter = where.join(' and ');
+
+  const counted = await pool.query(
+    `select count(*)::int as n from users where ${filter}`,
+    params,
   );
-  res.json(rows);
+  const total = counted.rows[0].n;
+
+  params.push(limit, offset);
+  const { rows } = await pool.query(
+    `select users.id, users.first_name, users.faculty, users.promotion
+     from users
+     where ${filter}
+     order by users.first_name, users.id
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+  );
+
+  const nextOffset = offset + rows.length;
+  res.json({
+    items: rows,
+    total,
+    next_offset: nextOffset < total ? nextOffset : null,
+  });
 }));
 
 // ───────────── Crushes secrets ─────────────
@@ -432,6 +540,109 @@ app.post('/crushes/:id/toggle', auth, apiLimiter, wrap(async (req, res) => {
   res.json({ active: true });
 }));
 
+// ───────────── Blocage et signalement ─────────────
+// Ces deux gestes existent pour une raison simple : une app qui met des gens
+// en relation doit permettre de dire « plus jamais celui-là ».
+
+/** Les personnes que j'ai bloquées (l'app s'en sert pour l'état des boutons). */
+app.get('/blocks', auth, apiLimiter, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `select u.id, u.first_name, u.faculty, b.created_at
+     from blocks b
+     join users u on u.id = b.blocked_id
+     where b.user_id = $1
+     order by b.created_at desc`,
+    [req.uid],
+  );
+  res.json(rows);
+}));
+
+/**
+ * Bloquer quelqu'un.
+ *
+ * Effets, dans cet ordre : la personne disparaît de mon annuaire et du sien,
+ * nos choix mutuels sont effacés, et nos alarmes passées sont supprimées.
+ * Aucune alarme ne pourra plus sonner entre nous, même après déblocage
+ * (le choix de l'autre a été effacé, il devra le refaire).
+ */
+app.post('/blocks/:id', auth, apiLimiter, wrap(async (req, res) => {
+  const target = validTarget(req, res);
+  if (!target) return;
+
+  try {
+    await pool.query(
+      `insert into blocks (user_id, blocked_id) values ($1, $2)
+       on conflict do nothing`,
+      [req.uid, target],
+    );
+  } catch (e) {
+    if (e.code === '23503') return res.status(404).json({ error: 'Profil introuvable.' });
+    throw e;
+  }
+
+  await pool.query(
+    `delete from crushes
+     where (from_user = $1 and to_user = $2) or (from_user = $2 and to_user = $1)`,
+    [req.uid, target],
+  );
+  await pool.query(
+    `delete from alarms
+     where user_a = least($1::uuid, $2::uuid) and user_b = greatest($1::uuid, $2::uuid)`,
+    [req.uid, target],
+  );
+
+  res.json({ blocked: true });
+}));
+
+app.delete('/blocks/:id', auth, apiLimiter, wrap(async (req, res) => {
+  const target = validTarget(req, res);
+  if (!target) return;
+  await pool.query(
+    'delete from blocks where user_id = $1 and blocked_id = $2',
+    [req.uid, target],
+  );
+  res.json({ blocked: false });
+}));
+
+const REPORT_REASONS = new Set([
+  'harcelement',
+  'faux_profil',
+  'intimidation',
+  'autre',
+]);
+
+/**
+ * Signaler quelqu'un. On enregistre le fait et le motif ; aucune décision
+ * automatique n'est prise. Une seule ligne par paire : signaler deux fois met
+ * à jour le motif et la date au lieu d'empiler les doublons.
+ */
+app.post('/reports/:id', auth, apiLimiter, wrap(async (req, res) => {
+  const target = validTarget(req, res);
+  if (!target) return;
+
+  const reason = clean(req.body.reason, 40);
+  if (!REPORT_REASONS.has(reason)) {
+    return res.status(400).json({ error: 'Motif de signalement inconnu.' });
+  }
+  const details = clean(req.body.details, 500) || null;
+
+  try {
+    await pool.query(
+      `insert into reports (reporter_id, reported_id, reason, details)
+       values ($1, $2, $3, $4)
+       on conflict (reporter_id, reported_id) do update
+         set reason = excluded.reason,
+             details = excluded.details,
+             updated_at = now()`,
+      [req.uid, target, reason, details],
+    );
+  } catch (e) {
+    if (e.code === '23503') return res.status(404).json({ error: 'Profil introuvable.' });
+    throw e;
+  }
+  res.json({ ok: true });
+}));
+
 // ───────────── Position (jamais exposée) ─────────────
 app.post('/location', auth, locationLimiter, wrap(async (req, res) => {
   const lat = Number(req.body.lat);
@@ -458,7 +669,12 @@ app.get('/alarms', auth, apiLimiter, wrap(async (req, res) => {
             u.id as other_id, u.first_name as other_name, u.faculty as other_faculty
      from alarms a
      join users u on u.id = case when a.user_a = $1 then a.user_b else a.user_a end
-     where a.user_a = $1 or a.user_b = $1
+     where (a.user_a = $1 or a.user_b = $1)
+       and not exists (
+         select 1 from blocks b
+         where (b.user_id = $1 and b.blocked_id = u.id)
+            or (b.user_id = u.id and b.blocked_id = $1)
+       )
      order by a.created_at desc limit 100`,
     [req.uid],
   );
