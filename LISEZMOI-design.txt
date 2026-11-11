@@ -1,0 +1,67 @@
+Ding — version 0.2.2
+Connexion et inscription alignées sur l'onboarding
+==================================================
+
+Ce que contient cette archive
+-----------------------------
+Neuf fichiers, aux mêmes chemins que dans le dépôt. Décompresse l'archive à la
+racine du projet (là où se trouve pubspec.yaml) : les fichiers existants sont
+remplacés, les deux nouveaux apparaissent.
+
+  lib/core/widgets/hero_media.dart              NOUVEAU — la photo + le flou
+  lib/core/widgets/pill_button.dart             NOUVEAU — la pastille
+  lib/features/auth/auth_page.dart              réécrit
+  lib/features/onboarding/onboarding_page.dart  utilise les widgets partagés
+  CHANGELOG.md                                  entrée 0.2.2 réécrite
+  README.md                                     une phrase sur le gabarit commun
+  AUDIT.md                                      note sur le cacheWidth
+  pubspec.yaml                                  version 0.2.2+4
+  .gitignore                                    pubspec.lock versionné
+
+Aucune image n'est dans cette archive. Tes photos restent exactement celles que
+tu avais : onboarding_1.jpg (600×400), onboarding_2.jpg et onboarding_3.jpg
+(600×900), auth_login.jpg (600×900), auth_signup.jpg (600×362). Rien n'a été
+remplacé, rien n'a été supprimé — extra_clouds.jpg et extra_heart.jpg sont
+toujours là elles aussi.
+
+À faire après décompression
+---------------------------
+  flutter pub get
+  flutter analyze      # doit afficher « No issues found! »
+  flutter test         # 15 tests, tous au vert
+
+Ce qui change à l'écran
+-----------------------
+L'écran de connexion et l'écran d'inscription reprennent le gabarit de
+l'onboarding :
+
+  - la photo occupe le haut de l'écran, pleine largeur, sans cadre arrondi,
+    et se dissout dans le papier par le même flou progressif ;
+  - le logo et « Ding » sont posés sur la fin du fondu, là où la photo est
+    déjà redevenue du papier ;
+  - le titre et le texte sont sur le papier, comme les étapes d'onboarding ;
+  - les champs sont les mêmes, le bouton principal est le même bouton d'encre
+    de 54 px, et les actions secondaires sont des pastilles ;
+  - passer de « se connecter » à « s'inscrire » fait glisser l'autre photo en
+    fondu enchaîné ;
+  - quand le clavier s'ouvre, la photo se replie et le formulaire remonte.
+
+L'onboarding, lui, ne change pas d'apparence : il utilise simplement les deux
+widgets partagés au lieu de garder sa propre copie du flou et de la pastille.
+
+Un mot sur la résolution des photos
+-----------------------------------
+Elles font 600 px de large. En plein écran sur un téléphone récent, ça veut
+dire un agrandissement d'environ 1,8× — c'est un peu doux, ça ne casse rien.
+Le jour où tu veux des versions plus grandes, remplace simplement les fichiers
+dans assets/images/ : le code n'a pas besoin de bouger. Les points d'intérêt
+(le paramètre `alignment` de chaque étape, dans onboarding_page.dart) restent
+à ajuster au cas par cas selon le nouveau cadrage.
+
+Aperçu
+------
+apercu-design.html (et apercu-design.png) montre les cinq écrans côte à côte,
+rendus à l'échelle 390 × 844. C'est une reconstitution HTML, pas une capture de
+l'app : les mesures viennent du code, quelques détails du flou diffèrent.
+
+Rien n'a été poussé sur le dépôt distant.

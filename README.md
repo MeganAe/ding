@@ -24,7 +24,9 @@ des choix se fait entièrement côté serveur.
 ## Comment ça marche
 
 1. **Onboarding** — trois écrans pour expliquer la promesse (choix secret,
-   réciprocité, proximité).
+   réciprocité, proximité). L'écran de connexion et d'inscription reprend le
+   même gabarit : photo pleine largeur qui se dissout dans le papier, titre et
+   champs posés dessus, un seul bouton plein (voir `lib/core/widgets/`).
 2. **Compte** — email + mot de passe, jeton JWT valable 30 jours et conservé
    dans le Keystore Android. Mot de passe oublié : code à 6 chiffres par email.
 3. **Découvrir** — l'annuaire du campus. Tu choisis / retires des personnes.

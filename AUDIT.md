@@ -148,6 +148,9 @@ départ. Un inconnu peut s'inscrire et parcourir l'annuaire des étudiants.
   `intl` (ou `MaterialLocalizations`) gérerait la locale et le format 12/24 h.
 - `onboarding_page.dart` : `Image.asset` sans `cacheWidth` décode les JPEG à
   pleine résolution en mémoire. Sur un téléphone d'entrée de gamme, ça se sent.
+  (0.2.2 : les photos d'origine font 600 px de large, il n'y a donc rien à
+  plafonner. Le point redevient d'actualité si elles sont remplacées par des
+  originaux plus grands — `HeroMedia` accepte un `cacheWidth` pour ça.)
 - `Config.alarmRadiusMeters` est dupliqué entre le Dart et l'API. Les deux
   commentaires disent « doit rester identique » : c'est une promesse qu'aucun
   test ne vérifie. Exposer la valeur via `GET /config`.

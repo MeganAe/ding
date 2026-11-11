@@ -1,4 +1,6 @@
 # ───────────── Flutter / Dart ─────────────
+# pubspec.lock est volontairement versionné : ding est une application, pas
+# une bibliothèque — on veut des builds reproductibles.
 .dart_tool/
 .packages
 .pub-cache/
@@ -6,7 +8,6 @@
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock
 *.iml
 .idea/
 .vscode/

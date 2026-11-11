@@ -5,8 +5,16 @@ import 'package:go_router/go_router.dart';
 import '../../core/config.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
+import '../../core/widgets/hero_media.dart';
+import '../../core/widgets/pill_button.dart';
 import '../../data/api_client.dart';
 
+/// Connexion et inscription : le même écran, deux modes.
+///
+/// La mise en page reprend celle de l'onboarding — une photo pleine largeur
+/// qui se dissout dans le papier par un flou progressif, puis du texte et des
+/// champs posés sur ce papier. Seule différence : ici le contenu défile, parce
+/// que le clavier occupe la moitié de l'écran.
 class AuthPage extends ConsumerStatefulWidget {
   const AuthPage({super.key});
 
@@ -68,127 +76,217 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     }
   }
 
+  void _switchMode() {
+    if (_busy) return;
+    setState(() {
+      _signup = !_signup;
+      _message = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
+    final size = MediaQuery.sizeOf(context);
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+
+    // Clavier ouvert, la photo s'efface : le formulaire garde la priorité.
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final heroHeight = (size.height * 0.40).clamp(200.0, 360.0);
+
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: SizedBox(
-                  height: 200,
-                  width: double.infinity,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: Image.asset(
+      backgroundColor: DingColors.paper,
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: keyboardOpen
+                  ? const SizedBox(width: double.infinity, height: 0)
+                  : SizedBox(
+                      height: heroHeight,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // La photo change de page quand on passe de
+                          // « se connecter » à « s'inscrire ».
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 280),
+                            child: HeroMedia(
+                              key: ValueKey(_signup),
+                              asset: _signup
+                                  ? 'assets/images/auth_signup.jpg'
+                                  : 'assets/images/auth_login.jpg',
+                              // Inscription : deux visages en haut de l'image,
+                              // donc on garde le centre. Connexion : le couple
+                              // est en bas, on cale l'image sur son bas pour
+                              // qu'il tombe juste avant le fondu au papier.
+                              alignment: _signup
+                                  ? Alignment.center
+                                  : Alignment.bottomCenter,
+                            ),
+                          ),
+
+                          // La marque, posée sur la fin du fondu — là où la
+                          // photo est déjà redevenue du papier.
+                          Positioned(
+                            left: 24,
+                            bottom: 0,
+                            child: Row(
+                              children: [
+                                Image.asset(
+                                  'assets/images/logo.png',
+                                  height: 34,
+                                ),
+                                const SizedBox(width: 8),
+                                Text('Ding', style: theme.headlineMedium),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + safeBottom),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    _signup ? 'Crée ton compte.' : 'Connecte-toi.',
+                    style: theme.headlineMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _signup ? _signupSubtitle() : _loginSubtitle(),
+                    style: theme.bodyLarge,
+                  ),
+                  const SizedBox(height: 28),
+                  if (_signup) ...[
+                    TextField(
+                      controller: _name,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(hintText: 'Prénom'),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  TextField(
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.email],
+                    autocorrect: false,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(hintText: 'Email'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _password,
+                    obscureText: !_showPassword,
+                    autofillHints: [
                       _signup
-                          ? 'assets/images/auth_signup.jpg'
-                          : 'assets/images/auth_login.jpg',
-                      key: ValueKey(_signup),
-                      fit: BoxFit.cover,
-                      alignment: _signup
-                          ? const Alignment(0, -0.3)
-                          : const Alignment(0, 0.6),
-                      filterQuality: FilterQuality.high,
-                      width: double.infinity,
-                      height: 200,
+                          ? AutofillHints.newPassword
+                          : AutofillHints.password,
+                    ],
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _busy ? null : _submit(),
+                    decoration: InputDecoration(
+                      hintText: 'Mot de passe',
+                      suffixIcon: IconButton(
+                        tooltip: _showPassword
+                            ? 'Masquer le mot de passe'
+                            : 'Afficher le mot de passe',
+                        icon: Icon(
+                          _showPassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                        ),
+                        onPressed: () =>
+                            setState(() => _showPassword = !_showPassword),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Image.asset('assets/images/logo.png', height: 56),
-              const SizedBox(height: 16),
-              Text('Ding', style: theme.displayLarge),
-              const SizedBox(height: 8),
-              Text(
-                _signup ? 'Crée ton compte.' : 'Connecte-toi.',
-                style: theme.titleLarge,
-              ),
-              const SizedBox(height: 32),
-              if (_signup) ...[
-                TextField(
-                  controller: _name,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(hintText: 'Prénom'),
-                ),
-                const SizedBox(height: 12),
-              ],
-              TextField(
-                controller: _email,
-                keyboardType: TextInputType.emailAddress,
-                autofillHints: const [AutofillHints.email],
-                autocorrect: false,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(hintText: 'Email'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _password,
-                obscureText: !_showPassword,
-                autofillHints: [
-                  _signup ? AutofillHints.newPassword : AutofillHints.password,
+                  if (_message != null) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 2),
+                          child: Icon(
+                            Icons.error_outline,
+                            size: 18,
+                            color: DingColors.signal,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _message!,
+                            style: theme.bodyMedium
+                                ?.copyWith(color: DingColors.signal),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: _busy ? null : _submit,
+                    child: _busy
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: DingColors.paper,
+                            ),
+                          )
+                        : Text(_signup ? 'Créer mon compte' : 'Me connecter'),
+                  ),
+                  if (!_signup)
+                    Center(
+                      child: TextButton(
+                        onPressed: _busy ? null : () => context.push('/forgot'),
+                        child: Text(
+                          'Mot de passe oublié ?',
+                          style: theme.bodyMedium
+                              ?.copyWith(color: DingColors.slate),
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox(height: 16),
+                  Center(
+                    child: PillButton(
+                      label: _signup
+                          ? "J'ai déjà un compte"
+                          : 'Pas encore de compte ? Inscris-toi',
+                      onPressed: _busy ? null : _switchMode,
+                    ),
+                  ),
                 ],
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _busy ? null : _submit(),
-                decoration: InputDecoration(
-                  hintText: 'Mot de passe',
-                  suffixIcon: IconButton(
-                    tooltip: _showPassword
-                        ? 'Masquer le mot de passe'
-                        : 'Afficher le mot de passe',
-                    icon: Icon(
-                      _showPassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                    ),
-                    onPressed: () =>
-                        setState(() => _showPassword = !_showPassword),
-                  ),
-                ),
               ),
-              if (_message != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  _message!,
-                  style: theme.bodyMedium?.copyWith(color: DingColors.signal),
-                ),
-              ],
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _busy ? null : _submit,
-                child: Text(_signup ? 'Créer mon compte' : 'Me connecter'),
-              ),
-              if (!_signup)
-                Center(
-                  child: TextButton(
-                    onPressed: _busy ? null : () => context.push('/forgot'),
-                    child: const Text('Mot de passe oublié ?'),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() {
-                            _signup = !_signup;
-                            _message = null;
-                          }),
-                  child: Text(_signup
-                      ? "J'ai déjà un compte"
-                      : "Pas encore de compte ? Inscris-toi"),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  String _loginSubtitle() {
+    return 'Ton compte te rend à tes choix secrets, et à ceux qui t\'ont '
+        'choisi.';
+  }
+
+  String _signupSubtitle() {
+    final domain = Config.allowedEmailDomain;
+    if (domain.isEmpty) {
+      return 'Un prénom, un mot de passe, et c\'est parti. Rien n\'est public.';
+    }
+    return 'Un prénom, un mot de passe, ton adresse @$domain. Rien n\'est '
+        'public.';
   }
 }

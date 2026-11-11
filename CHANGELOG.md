@@ -1,5 +1,54 @@
 # Journal des modifications
 
+## 0.2.2 — connexion et inscription dans le langage de l'onboarding
+
+- **Vos photos d'origine sont conservées** : aucune image n'est remplacée ni
+  modifiée dans cette version. `onboarding_1.jpg` (600 × 400),
+  `onboarding_2.jpg` et `onboarding_3.jpg` (600 × 900), `auth_login.jpg`
+  (600 × 900) et `auth_signup.jpg` (600 × 362) sont utilisées telles quelles.
+- **Les écrans de connexion et d'inscription reprennent le gabarit de
+  l'onboarding** : la photo occupe le haut de l'écran, en pleine largeur, et se
+  dissout dans le papier par le même flou progressif. Le fond arrondi de 200 px
+  qui enfermait l'image a disparu.
+- **Un seul langage pour les deux écrans** : `HeroMedia` (photo + flou fondu +
+  voiles) et `PillButton` (pastille d'action secondaire) sont maintenant des
+  widgets partagés dans `lib/core/widgets/`. « Passer » sur l'onboarding et
+  « Pas encore de compte ? Inscris-toi » sur la connexion sont la même
+  pastille ; le bouton principal est le même bouton d'encre, à la même hauteur.
+- **La marque s'assoit sur la fin du fondu** : petit logo + « Ding », là où la
+  photo est déjà redevenue du papier — la hauteur gagnée va au formulaire.
+- **Changement de mode en fondu** : passer de « se connecter » à « s'inscrire »
+  fait glisser l'autre photo en fondu enchaîné, sans saut.
+- **Le clavier passe devant la photo** : quand un champ prend le focus, la photo
+  se replie et le formulaire remonte. L'écran défile (contrairement à
+  l'onboarding) : c'est nécessaire, le clavier occupe la moitié de l'écran.
+- Pendant l'envoi, le bouton affiche un indicateur circulaire au lieu de son
+  libellé ; les messages d'erreur portent une icône et restent lisibles.
+- Points d'intérêt (`Alignment`) réglés sur le cadrage réel de chaque photo :
+  le couple de `auth_login.jpg` est calé en bas pour tomber juste avant le
+  fondu, les deux visages de `auth_signup.jpg` restent nets.
+- `flutter analyze` : aucun problème. `flutter test` : 15 tests au vert.
+- `pubspec.lock` est maintenant versionné : c'est une application, les builds
+  doivent être reproductibles.
+
+## 0.2.1 — onboarding en pleine largeur
+
+- **Les images d'onboarding remplissent maintenant l'écran** : plus de cadre
+  arrondi avec des marges, elles prennent toute la largeur et ~65 % de la
+  hauteur (`BoxFit.cover`), avec un point d'intérêt réglable par étape.
+- **Flou progressif** entre l'image et le texte, puis fondu au papier : la
+  séparation se fait sans bord visible. Technique utilisée : une copie de la
+  même image, floutée (`ImageFiltered`) et révélée par un dégradé
+  (`ShaderMask`) — plus léger et plus progressif qu'un `BackdropFilter`, dont
+  la bande aurait un bord net.
+- **La page ne défile plus** (elle ne défilait pas avant, mais rien ne
+  l'empêchait de déborder) : l'agrandissement du texte système est plafonné à
+  125 %, la mise en page se comprime au lieu de déborder.
+- **« Passer », la progression et le bouton sont fixes** : seuls l'image et le
+  texte défilent horizontalement, ce qui donne un glissement plus calme.
+- Léger voile en haut pour garder le bouton « Passer » et les icônes de la
+  barre d'état lisibles sur une photo claire.
+
 ## 0.2.0 — audit et consolidation
 
 ### Corrigé
