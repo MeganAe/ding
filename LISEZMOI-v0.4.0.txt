@@ -1,0 +1,171 @@
+Ding — mise à jour 0.4.0
+========================
+
+Cette archive REMPLACE les précédentes : elle contient tout depuis la 0.2.2.
+Une seule mise à jour à appliquer.
+
+Au programme : le liseré noir que tu as vu sur ton Android 9, les polices
+embarquées, la vérification d'email, l'alerte par email à l'équipe, la
+réactivation d'un compte suspendu, et la ré-acceptation des CGU.
+La signature de release reste de côté, comme demandé.
+
+
+1. LE LISERÉ NOIR SUR ANDROID 9 — corrigé
+-----------------------------------------
+
+Deux causes possibles, toutes les deux traitées (je n'ai pas ton téléphone
+sous la main, donc j'ai fermé les deux plutôt que de choisir) :
+
+a) LES BARRES SYSTÈME. Sur Android 8 et 9, le thème généré par flutter create
+   laisse la barre de navigation NOIRE en bas et la barre d'état sombre en
+   haut. Sur l'onboarding, dont le bas est en papier clair, ça se voit comme
+   une ligne noire collée au bord.
+   → Corrigé dans tool/android/styles.xml + tool/android/colors.xml (thème
+     Android, pour l'écran de démarrage) et dans lib/main.dart (SystemChrome,
+     dès la première image).
+
+b) LE FLOU DE LA PHOTO. Le fondu de l'onboarding utilisait un filtre de flou
+   GPU (ImageFilter.blur, sigma 18). Sur les téléphones sans Vulkan — Android
+   8 et 9 — Flutter passe par OpenGL ES, où ce filtre laisse des liserés.
+   → La version floue est maintenant obtenue en décodant la photo à 40 px de
+     large et en la laissant être agrandie : même fondu, aucun filtre GPU,
+     même résultat partout. Dans lib/core/widgets/hero_media.dart.
+
+IMPORTANT : si tu régénères le dossier android/, relance
+`bash tool/setup_android.sh` — c'est lui qui pose le thème. Si tu gardes ton
+android/ actuel, copie à la main :
+    tool/android/colors.xml  →  android/app/src/main/res/values/colors.xml
+    tool/android/styles.xml  →  android/app/src/main/res/values/styles.xml
+
+Si la ligne persiste après ça, dis-moi où elle est (en haut / en bas / sur le
+côté) et sur quel écran exactement : je saurai quoi regarder.
+
+
+2. POLICES EMBARQUÉES
+---------------------
+
+Instrument Sans et Bricolage Grotesque sont dans assets/fonts/ (avec leurs
+licences SIL OFL). La dépendance google_fonts a été retirée : plus de
+téléchargement au premier lancement, donc plus d'app en police système quand
+le réseau est lent — ce qui t'arrive forcément à Bukavu.
+
+
+3. VÉRIFICATION D'EMAIL
+-----------------------
+
+- Un code à 6 chiffres part à l'inscription (même mécanisme que « mot de passe
+  oublié » : Resend si RESEND_API_KEY est défini, sinon le code s'affiche dans
+  les logs du serveur).
+- Tant que l'adresse n'est pas confirmée, l'app reste utilisable — annuaire,
+  choix secrets, profil — mais la position n'est pas envoyée, donc l'alarme ne
+  sonne pas. C'est le compromis : un compte jetable ne peut pas faire sonner
+  un téléphone, sans bloquer quelqu'un dont l'email est dans les indésirables.
+- Écran de confirmation, bandeau sur l'accueil, état visible dans le profil,
+  renvoi limité à une fois par minute.
+- Les comptes DÉJÀ existants sont marqués vérifiés une seule fois au démarrage
+  (marqueur en base) : déployer cette version ne coupe l'alarme de personne.
+
+⚠ À l'inscription, si RESEND_API_KEY est vide en production, PERSONNE ne
+recevra son code et personne ne pourra faire sonner l'alarme. Configure
+Resend (ou équivalent) avant d'ouvrir le campus.
+
+
+4. MODÉRATION
+-------------
+
+- L'équipe reçoit un email à chaque nouveau profil signalé (une seule fois par
+  personne : resignaler ne noie pas la boîte).
+- L'écran Signalements a une bascule (icône œil) qui montre l'historique, y
+  compris les comptes suspendus, avec « Réactiver le compte ».
+
+
+5. CGU
+------
+
+Si TERMS_VERSION côté API ne correspond plus à la version acceptée par le
+compte, un dialogue propose de relire puis d'accepter. L'app reste utilisable
+en attendant. Le texte côté app est dans lib/features/legal/legal_texts.dart :
+quand tu le modifies, change les deux versions (legalVersion et
+TERMS_VERSION), sinon la trace d'acceptation ne veut plus dire grand-chose.
+
+
+ORDRE DE DÉPLOIEMENT
+--------------------
+
+1. API d'abord :
+   - nouvelles variables facultatives : ADMIN_EMAILS, TERMS_VERSION
+   - RESEND_API_KEY devient nécessaire pour la vérification d'email
+   - nouvelles colonnes et tables créées automatiquement au démarrage
+     (email_verified_at, email_verifications, app_meta)
+   - POST /location répond 403 tant que l'email n'est pas vérifié
+2. App ensuite :
+
+       flutter pub get
+       flutter analyze          # « No issues found! »
+       flutter test             # 64 tests au vert
+       bash tool/setup_android.sh   # si tu régénères android/
+       flutter build apk --release --dart-define=API_URL=... \
+         --dart-define=CONTACT_EMAIL=equipe@ton-domaine.org
+
+L'API et l'app peuvent être déployées dans n'importe quel ordre ici : une app
+0.3.x contre l'API 0.4.0 continue de fonctionner (elle ignore simplement la
+vérification).
+
+
+CE QUI RESTE OUVERT (et pourquoi)
+---------------------------------
+
+- SUIVI QUAND L'APP EST QUITTÉE, notification prioritaire, push FCM : les
+  trois demandent un vrai téléphone et, pour FCM, un projet Firebase. Écrire
+  ça sans pouvoir l'exécuter, c'est te livrer du code qui casse au build sans
+  que je puisse le voir. Le plan détaillé est dans
+  docs/alarme-en-arriere-plan.md.
+- SIGNATURE DE RELEASE : laissé de côté, comme demandé.
+- Pas de notification push côté modérateur (email seulement).
+
+
+FICHIERS (56)
+-------------
+
+Nouveaux
+  lib/features/auth/verify_email_page.dart   écran de confirmation
+  test/verify_email_page_test.dart           4 tests
+  assets/fonts/InstrumentSans-{400,500,600,700}.ttf
+  assets/fonts/BricolageGrotesque-700.ttf
+  assets/fonts/OFL-InstrumentSans.txt, OFL-BricolageGrotesque.txt
+  tool/android/styles.xml, tool/android/colors.xml
+
+Modifiés
+  lib/main.dart                    barres système au papier
+  lib/core/widgets/hero_media.dart flou sans filtre GPU (liseré)
+  lib/core/theme.dart              polices embarquées
+  pubspec.yaml                     google_fonts retiré, polices déclarées
+  tool/setup_android.sh            copie le thème + garde-fou
+  lib/data/models.dart             emailVerified, termsVersion (profil et config)
+  lib/data/repository.dart         verifyEmail, resendVerification, acceptTerms,
+                                   restoreAccount
+  lib/core/providers.dart          file de modération paramétrable
+  lib/core/router.dart             route /verify
+  lib/features/home/home_shell.dart  bandeaux génériques (email, GPS), dialogue CGU
+  lib/features/profile/profile_page.dart  état de l'adresse email
+  lib/features/moderation/moderation_page.dart  historique + réactivation
+  api/src/index.js                 vérification d'email, /auth/accept-terms,
+                                   email à l'équipe, /admin/users/:id/restore,
+                                   /location conditionné
+  api/src/db.js                    email_verifications, app_meta, colonne,
+                                   migration « comptes existants vérifiés »
+  api/src/mailer.js                emails de vérification et de signalement
+  api/test/parcours.test.js        34 tests (6 de plus)
+  api/README.md, api/.env.example, api/package.json
+  test/api_client_test.dart        5 tests de plus
+  test/moderation_page_test.dart   1 test de plus (réactivation)
+  CHANGELOG.md, README.md, pubspec.yaml (0.4.0+8)
+
+
+VÉRIFICATIONS FAITES ICI
+------------------------
+
+  API      : npm test  → 34/34 au vert (base ding_test)
+  App      : flutter analyze → « No issues found! »
+             flutter test    → 64/64 au vert
+  Archive  : rejouée sur une copie propre (unzip + pub get) → mêmes résultats

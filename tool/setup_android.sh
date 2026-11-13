@@ -35,6 +35,12 @@ cp tool/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 cp tool/android/network_security_config.xml \
   android/app/src/main/res/xml/network_security_config.xml
 
+# Thème : barres système au papier (sinon liseré noir en haut et en bas sur
+# Android 8/9). Voir l'en-tête de tool/android/styles.xml.
+mkdir -p android/app/src/main/res/values
+cp tool/android/colors.xml android/app/src/main/res/values/colors.xml
+cp tool/android/styles.xml android/app/src/main/res/values/styles.xml
+
 # minSdk 23 : requis par flutter_secure_storage (EncryptedSharedPreferences).
 echo "→ minSdk = 23"
 for f in android/app/build.gradle android/app/build.gradle.kts; do
@@ -60,5 +66,11 @@ for permission in ACCESS_FINE_LOCATION ACCESS_BACKGROUND_LOCATION \
     exit 1
   fi
 done
+
+# Garde-fou : les couleurs de barres système doivent suivre le papier.
+if ! grep -qs "ding_paper" android/app/src/main/res/values/styles.xml; then
+  echo "✗ styles.xml ne pose pas les couleurs de barres système." >&2
+  exit 1
+fi
 
 echo "✓ android/ prêt (applicationId com.meganae.ding, label Ding)"

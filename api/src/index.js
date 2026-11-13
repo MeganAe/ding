@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool, migrate, cleanup } from './db.js';
-import { sendMail, resetCodeEmail } from './mailer.js';
+import { sendMail, resetCodeEmail, verificationEmail, reportNoticeEmail } from './mailer.js';
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -12,6 +12,17 @@ const RADIUS = Number(process.env.ALARM_RADIUS_METERS || 150);
 const alarmPollSeconds = Number(process.env.ALARM_POLL_SECONDS || 20);
 const locationIntervalSeconds = Number(process.env.LOCATION_INTERVAL_SECONDS || 120);
 const DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || '').trim().toLowerCase();
+// Version des conditions d'utilisation. À changer quand le texte change :
+// l'app peut alors redemander l'acceptation (voir GET /config).
+const TERMS_VERSION = (process.env.TERMS_VERSION || '2026-11-01').trim();
+// Les modérateurs sont désignés par leur email, pas par un écran d'admin :
+// pas de rôle à s'attribuer soi-même, il faut modifier la configuration.
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 if (!JWT_SECRET || !process.env.DATABASE_URL) {
   console.error('DATABASE_URL et JWT_SECRET sont obligatoires.');
@@ -116,9 +127,66 @@ async function auth(req, res, next) {
     }
   }
 
+  // Un compte suspendu perd l'accès immédiatement. On répond 401 (et non 403)
+  // pour que l'app efface le jeton et ramène à l'écran de connexion : sinon
+  // elle resterait bloquée sur des erreurs sans issue.
+  try {
+    const { rows } = await pool.query(
+      'select role, banned_at, email_verified_at from users where id = $1',
+      [payload.sub],
+    );
+    const me = rows[0];
+    if (!me) return res.status(401).json({ error: 'Compte introuvable.' });
+    if (me.banned_at) {
+      return res.status(401).json({
+        error: 'Ce compte a été suspendu. Écris à l’équipe si tu penses qu’il s’agit d’une erreur.',
+      });
+    }
+    req.role = me.role === 'moderator' ? 'moderator' : 'user';
+    req.verified = me.email_verified_at !== null;
+  } catch (e) {
+    return next(e);
+  }
+
   req.uid = payload.sub;
   req.jti = payload.jti ?? null;
   req.tokenExp = payload.exp ?? null;
+  next();
+}
+
+// ───────────── Vérification d'email ─────────────
+// Un code à 6 chiffres plutôt qu'un lien : l'app n'a pas de liens profonds, et
+// un code se recopie sans dépendre d'un domaine vérifié. Même choix que pour
+// la réinitialisation de mot de passe.
+const VERIFY_TTL_HOURS = 24;
+const MAX_VERIFY_ATTEMPTS = 5;
+const VERIFY_RESEND_SECONDS = 60;
+
+/// Tire un code, l'enregistre haché, et l'envoie. Ne lève jamais : un email
+/// qui ne part pas ne doit pas faire échouer une inscription.
+async function issueEmailCode(userId, email) {
+  const code = String(randomInt(0, 1000000)).padStart(6, '0');
+  const hash = await bcrypt.hash(code, 10);
+  await pool.query(
+    `insert into email_verifications (user_id, code_hash, expires_at, attempts)
+     values ($1, $2, now() + make_interval(hours => $3), 0)
+     on conflict (user_id) do update
+       set code_hash = excluded.code_hash,
+           expires_at = excluded.expires_at,
+           attempts = 0,
+           created_at = now()`,
+    [userId, hash, VERIFY_TTL_HOURS],
+  );
+  const { subject, text } = verificationEmail(code);
+  await sendMail({ to: email, subject, text });
+  return code;
+}
+
+/// Réservé à l'équipe de modération (emails listés dans ADMIN_EMAILS).
+function moderator(req, res, next) {
+  if (req.role !== 'moderator') {
+    return res.status(403).json({ error: 'Réservé à l’équipe de modération.' });
+  }
   next();
 }
 
@@ -174,6 +242,7 @@ app.get('/config', (_req, res) => {
     alarm_radius_meters: RADIUS,
     alarm_poll_seconds: Math.round(alarmPollSeconds),
     location_interval_seconds: Math.round(locationIntervalSeconds),
+    terms_version: TERMS_VERSION,
   });
 });
 
@@ -188,17 +257,31 @@ app.post('/auth/signup', authLimiter, wrap(async (req, res) => {
       error: 'Prénom, email valide et mot de passe de 6 caractères minimum requis.',
     });
   }
+  // Accepter les CGU n'est pas une case décorative : on refuse la création du
+  // compte sans elle, sinon la preuve d'acceptation ne vaut rien.
+  if (req.body.accept_terms !== true) {
+    return res.status(400).json({
+      error: 'Tu dois accepter les conditions d’utilisation pour créer un compte.',
+      code: 'terms_required',
+      terms_version: TERMS_VERSION,
+    });
+  }
   if (DOMAIN && !email.endsWith(`@${DOMAIN}`)) {
     return res.status(400).json({ error: `Utilise ton adresse @${DOMAIN}.` });
   }
 
   const hash = await bcrypt.hash(password, 10);
   try {
+    const role = ADMIN_EMAILS.has(email) ? 'moderator' : 'user';
     const { rows } = await pool.query(
-      'insert into users (email, password_hash, first_name) values ($1, $2, $3) returning id',
-      [email, hash, firstName],
+      `insert into users (email, password_hash, first_name, role, terms_version, terms_accepted_at)
+       values ($1, $2, $3, $4, $5, now()) returning id`,
+      [email, hash, firstName, role, TERMS_VERSION],
     );
-    res.status(201).json({ token: sign(rows[0].id) });
+    // Le compte existe et se connecte, mais l'alarme reste muette tant que
+    // l'adresse n'est pas confirmée (voir POST /location).
+    await issueEmailCode(rows[0].id, email);
+    res.status(201).json({ token: sign(rows[0].id), email_verified: false });
   } catch (e) {
     if (e.code === '23505') {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet email.' });
@@ -214,7 +297,8 @@ app.post('/auth/login', authLimiter, wrap(async (req, res) => {
   const email = clean(req.body.email, 200).toLowerCase();
   const password = String(req.body.password ?? '');
   const { rows } = await pool.query(
-    'select id, password_hash, failed_attempts, locked_until from users where email = $1',
+    `select id, password_hash, failed_attempts, locked_until, banned_at
+     from users where email = $1`,
     [email],
   );
   const user = rows[0];
@@ -248,6 +332,13 @@ app.post('/auth/login', authLimiter, wrap(async (req, res) => {
     return res.status(401).json({ error: 'Email ou mot de passe incorrect.' });
   }
 
+  // Compte suspendu : le mot de passe est bon, mais l'accès reste fermé.
+  if (user.banned_at) {
+    return res.status(403).json({
+      error: 'Ce compte a été suspendu. Écris à l’équipe si tu penses qu’il s’agit d’une erreur.',
+    });
+  }
+
   if (user.failed_attempts > 0 || user.locked_until) {
     await pool
       .query(
@@ -256,6 +347,17 @@ app.post('/auth/login', authLimiter, wrap(async (req, res) => {
       )
       .catch(() => {});
   }
+
+  // Promotion par configuration : un email ajouté à ADMIN_EMAILS devient
+  // modérateur à sa prochaine connexion, sans migration de données.
+  const role = ADMIN_EMAILS.has(email) ? 'moderator' : 'user';
+  await pool
+    .query(
+      `update users set role = $2 where id = $1 and role <> $2`,
+      [user.id, role],
+    )
+    .catch(() => {});
+
   res.json({ token: sign(user.id) });
 }));
 
@@ -309,7 +411,8 @@ app.post('/auth/reset', authLimiter, wrap(async (req, res) => {
   }
 
   const { rows } = await pool.query(
-    `select pr.code_hash, pr.expires_at, pr.attempts, u.id as user_id
+    `select pr.code_hash, pr.expires_at, pr.attempts, u.id as user_id,
+            u.banned_at
      from password_resets pr
      join users u on u.id = pr.user_id
      where u.email = $1`,
@@ -326,6 +429,14 @@ app.post('/auth/reset', authLimiter, wrap(async (req, res) => {
       [row.user_id],
     );
     return res.status(400).json(invalid);
+  }
+
+  // Un compte suspendu ne retrouve pas l'accès en réinitialisant son mot de
+  // passe : sinon la suspension ne tiendrait qu'à un clic.
+  if (row.banned_at) {
+    return res.status(403).json({
+      error: 'Ce compte a été suspendu. Écris à l’équipe si tu penses qu’il s’agit d’une erreur.',
+    });
   }
 
   const hash = await bcrypt.hash(password, 10);
@@ -356,11 +467,82 @@ app.post('/auth/logout', auth, apiLimiter, wrap(async (req, res) => {
 
 // ───────────── Profil ─────────────
 // L'email n'est jamais exposé aux autres : il n'apparaît que dans /me.
-const PRIVATE_FIELDS = 'id, email, first_name, faculty, promotion, discoverable';
+// Ré-acceptation après un changement de texte : l'app compare la version
+// qu'elle connaît (GET /config) à celle enregistrée sur le compte (/me), et
+// appelle cette route quand elles diffèrent.
+app.post('/auth/accept-terms', auth, apiLimiter, wrap(async (req, res) => {
+  await pool.query(
+    'update users set terms_version = $2, terms_accepted_at = now() where id = $1',
+    [req.uid, TERMS_VERSION],
+  );
+  res.json({ ok: true, terms_version: TERMS_VERSION });
+}));
+
+app.post('/auth/verify-email', auth, authLimiter, wrap(async (req, res) => {
+  const code = clean(req.body.code, 10);
+  if (!/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Le code fait six chiffres.' });
+  }
+  if (req.verified) return res.json({ ok: true, already: true });
+
+  const { rows } = await pool.query(
+    'select code_hash, expires_at, attempts from email_verifications where user_id = $1',
+    [req.uid],
+  );
+  const row = rows[0];
+  const expire = row && new Date(row.expires_at) < new Date();
+  if (!row || expire || row.attempts >= MAX_VERIFY_ATTEMPTS) {
+    return res.status(400).json({
+      error: 'Code invalide ou expiré. Demande-en un nouveau.',
+      code: 'invalid_code',
+    });
+  }
+  if (!(await bcrypt.compare(code, row.code_hash))) {
+    await pool.query(
+      'update email_verifications set attempts = attempts + 1 where user_id = $1',
+      [req.uid],
+    );
+    return res.status(400).json({
+      error: 'Ce code ne correspond pas.',
+      code: 'invalid_code',
+    });
+  }
+
+  await pool.query('update users set email_verified_at = now() where id = $1', [req.uid]);
+  await pool.query('delete from email_verifications where user_id = $1', [req.uid]);
+  res.json({ ok: true });
+}));
+
+app.post('/auth/verify-email/resend', auth, authLimiter, wrap(async (req, res) => {
+  if (req.verified) return res.json({ ok: true, already: true });
+
+  // Pas plus d'un envoi par minute : sans ça, la route devient un moyen
+  // d'inonder une boîte aux lettres, ou la nôtre.
+  const { rows } = await pool.query(
+    `select extract(epoch from (now() - created_at))::int as age
+     from email_verifications where user_id = $1`,
+    [req.uid],
+  );
+  if (rows[0] && rows[0].age < VERIFY_RESEND_SECONDS) {
+    return res.status(429).json({
+      error: `Attends ${VERIFY_RESEND_SECONDS - rows[0].age} secondes avant de redemander un code.`,
+    });
+  }
+
+  const me = await pool.query('select email from users where id = $1', [req.uid]);
+  if (me.rowCount === 0) return res.status(404).json({ error: 'Compte introuvable.' });
+  await issueEmailCode(req.uid, me.rows[0].email);
+  res.json({ ok: true });
+}));
+
+const PRIVATE_FIELDS =
+    'id, email, first_name, faculty, promotion, discoverable, role, terms_version, terms_accepted_at';
 
 app.get('/me', auth, apiLimiter, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `select ${PRIVATE_FIELDS} from users where id = $1`,
+    `select ${PRIVATE_FIELDS},
+            (email_verified_at is not null) as email_verified
+     from users where id = $1`,
     [req.uid],
   );
   if (rows.length === 0) return res.status(404).json({ error: 'Compte introuvable.' });
@@ -428,6 +610,7 @@ app.get('/profiles', auth, apiLimiter, wrap(async (req, res) => {
     'users.id <> $1',
     "users.first_name <> ''",
     'users.discoverable',
+    'users.banned_at is null',
     `not exists (
        select 1 from blocks b
        where (b.user_id = $1 and b.blocked_id = users.id)
@@ -626,25 +809,186 @@ app.post('/reports/:id', auth, apiLimiter, wrap(async (req, res) => {
   }
   const details = clean(req.body.details, 500) || null;
 
+  let nouveau = false;
   try {
-    await pool.query(
+    const { rows } = await pool.query(
       `insert into reports (reporter_id, reported_id, reason, details)
        values ($1, $2, $3, $4)
        on conflict (reporter_id, reported_id) do update
          set reason = excluded.reason,
              details = excluded.details,
-             updated_at = now()`,
+             updated_at = now()
+       returning (xmax = 0) as nouveau`,
       [req.uid, target, reason, details],
     );
+    nouveau = rows[0]?.nouveau === true;
   } catch (e) {
     if (e.code === '23503') return res.status(404).json({ error: 'Profil introuvable.' });
     throw e;
   }
+
+  // On prévient l'équipe une seule fois par personne signalée : resignaler ne
+  // doit pas noyer la boîte de réception. L'envoi ne bloque jamais la réponse.
+  if (nouveau) notifyModerators(target).catch(() => {});
   res.json({ ok: true });
+}));
+
+// ───────────── Modération des signalements ─────────────
+// Le signalement n'est pas une décision : il ouvre une ligne dans la file.
+// Un modérateur la referme en ignorant ou en suspendant le compte.
+//
+// Deux principes tenus par le SQL ci-dessous :
+//  - le signalant n'est jamais identifié, même à l'équipe (pas de vengeance
+//    possible dans un campus de quelques centaines de personnes) ;
+//  - on renvoie un profil par personne signalée, avec le nombre de
+//    signalements : un seul avis isolé et vingt avis concordants ne se
+//    traitent pas de la même façon.
+const RESOLUTIONS = new Set(['dismiss', 'ban']);
+
+/// Prévient l'équipe qu'un profil vient d'être signalé.
+/// On n'y met ni l'identité du signalant, ni sa position, ni son email.
+async function notifyModerators(reportedId) {
+  const destinataires = new Set(ADMIN_EMAILS);
+  const { rows: mods } = await pool.query(
+    "select email from users where role = 'moderator'",
+  );
+  for (const m of mods) destinataires.add(m.email);
+  if (destinataires.size === 0) return;
+
+  const { rows } = await pool.query(
+    `select coalesce(u.first_name, '') as first_name,
+            count(r.id)::int as reports,
+            string_agg(distinct r.reason, ', ') as reasons
+     from users u left join reports r on r.reported_id = u.id
+     where u.id = $1
+     group by u.first_name`,
+    [reportedId],
+  );
+  const info = rows[0];
+  if (!info) return;
+
+  const { subject, text } = reportNoticeEmail({
+    name: info.first_name,
+    reports: info.reports,
+    reasons: info.reasons ?? 'non précisé',
+  });
+  for (const to of destinataires) await sendMail({ to, subject, text });
+}
+
+app.get('/admin/reports', auth, moderator, apiLimiter, wrap(async (req, res) => {
+  const onlyOpen = req.query.status !== 'all';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const filtre = onlyOpen ? "where r.status = 'open'" : '';
+
+  const { rows } = await pool.query(
+    `select r.reported_id as id,
+            u.first_name,
+            u.faculty,
+            (u.banned_at is not null) as banned,
+            count(*)::int as reports,
+            count(*) filter (where r.status = 'open')::int as open_reports,
+            max(r.created_at) as last_report_at,
+            array_agg(distinct r.reason) as reasons,
+            (array_agg(r.reason order by r.created_at desc))[1] as last_reason,
+            (array_agg(r.details order by r.created_at desc))[1] as last_details
+     from reports r
+     join users u on u.id = r.reported_id
+     ${filtre}
+     group by r.reported_id, u.first_name, u.faculty, u.banned_at
+     order by open_reports desc, max(r.created_at) desc
+     limit $1 offset $2`,
+    [limit, offset],
+  );
+
+  const counts = await pool.query(
+    `select
+       (select count(distinct reported_id) from reports
+         where status = 'open')::int as total,
+       (select count(*) from reports where status = 'open')::int as open_reports`,
+  );
+
+  res.json({
+    items: rows,
+    total: counts.rows[0].total,
+    open_reports: counts.rows[0].open_reports,
+  });
+}));
+
+// Réactivation : une suspension ne se lève que par un geste explicite de
+// l'équipe — jamais automatiquement, jamais depuis le compte concerné.
+app.post('/admin/users/:id/restore', auth, moderator, apiLimiter, wrap(async (req, res) => {
+  const target = String(req.params.id || '');
+  if (!UUID_RE.test(target)) {
+    return res.status(400).json({ error: 'Identifiant de profil invalide.' });
+  }
+  const { rowCount } = await pool.query(
+    'update users set banned_at = null where id = $1 and banned_at is not null',
+    [target],
+  );
+  if (rowCount === 0) {
+    return res.status(404).json({ error: 'Ce compte n’est pas suspendu.' });
+  }
+  res.json({ ok: true });
+}));
+
+app.post('/admin/reports/:id/resolve', auth, moderator, apiLimiter, wrap(async (req, res) => {
+  const target = String(req.params.id || '');
+  if (!UUID_RE.test(target)) {
+    return res.status(400).json({ error: 'Identifiant de profil invalide.' });
+  }
+  if (target === req.uid) {
+    return res.status(400).json({ error: 'Tu ne peux pas te modérer toi-même.' });
+  }
+
+  const action = clean(req.body.action, 20);
+  if (!RESOLUTIONS.has(action)) {
+    return res.status(400).json({ error: 'Action inconnue (dismiss ou ban).' });
+  }
+  const note = clean(req.body.note, 300) || null;
+  const status = action === 'ban' ? 'banned' : 'dismissed';
+
+  const resolved = await pool.query(
+    `update reports
+        set status = $2, resolution = $3, resolved_by = $4, resolved_at = now()
+      where reported_id = $1 and status = 'open'`,
+    [target, status, note, req.uid],
+  );
+  if (resolved.rowCount === 0) {
+    return res.status(404).json({ error: 'Aucun signalement ouvert pour ce profil.' });
+  }
+
+  if (action === 'ban') {
+    // Date de suspension + coupure immédiate : plus de position, plus de
+    // choix secrets. Sans ça, une alarme pourrait encore sonner avec
+    // quelqu'un qui n'a plus accès à l'app.
+    await pool.query(
+      'update users set banned_at = now() where id = $1 and banned_at is null',
+      [target],
+    );
+    await pool.query('delete from locations where user_id = $1', [target]);
+    await pool.query(
+      'delete from crushes where from_user = $1 or to_user = $1',
+      [target],
+    );
+  }
+
+  res.json({ ok: true, status, resolved: resolved.rowCount });
 }));
 
 // ───────────── Position (jamais exposée) ─────────────
 app.post('/location', auth, locationLimiter, wrap(async (req, res) => {
+  // L'alarme est la raison d'être de l'app : elle exige une adresse vérifiée,
+  // sinon un compte jetable peut faire sonner le téléphone de quelqu'un.
+  // Le reste de l'app (annuaire, choix) reste utilisable sans vérification.
+  if (!req.verified) {
+    return res.status(403).json({
+      error: 'Confirme ton adresse email pour que l’alarme puisse sonner.',
+      code: 'email_not_verified',
+    });
+  }
+
   const lat = Number(req.body.lat);
   const lng = Number(req.body.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) ||

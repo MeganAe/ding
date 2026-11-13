@@ -377,6 +377,22 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
             ),
             const SizedBox(height: 24),
 
+            if (me?.isModerator == true) ...[
+              const _SectionLabel('Équipe du campus'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.shield_outlined),
+                  title: const Text('Signalements'),
+                  subtitle: const Text(
+                    'Les profils signalés, à classer ou à suspendre.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () => context.push('/moderation'),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+
             const _SectionLabel('Le compte'),
             Card(
               child: Column(
@@ -400,6 +416,39 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     leading: const Icon(Icons.logout),
                     title: const Text('Me déconnecter'),
                     onTap: _busy ? null : _confirmLogout,
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: Icon(
+                      me?.emailVerified == false
+                          ? Icons.mark_email_unread_outlined
+                          : Icons.verified_outlined,
+                    ),
+                    title: const Text('Adresse email'),
+                    subtitle: Text(
+                      me?.emailVerified == false
+                          ? 'À confirmer — l’alarme ne sonne pas encore.'
+                          : 'Confirmée.',
+                    ),
+                    trailing: me?.emailVerified == false
+                        ? const Icon(Icons.chevron_right, size: 20)
+                        : null,
+                    onTap: me?.emailVerified == false
+                        ? () => context.push('/verify')
+                        : null,
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: const Text('Conditions d’utilisation'),
+                    onTap: () => context.push('/legal/terms'),
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.lock_outline),
+                    title: const Text('Confidentialité'),
+                    subtitle: const Text('Ce qui est gardé, et qui peut le voir.'),
+                    onTap: () => context.push('/legal/privacy'),
                   ),
                   const Divider(),
                   ListTile(

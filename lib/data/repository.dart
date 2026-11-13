@@ -7,15 +7,19 @@ class Repository {
 
   // ───────────── Authentification ─────────────
 
+  /// Crée le compte. L'acceptation des conditions est obligatoire : l'API
+  /// refuse la création sans elle, et garde la version acceptée.
   Future<void> signUp({
     required String firstName,
     required String email,
     required String password,
+    bool acceptTerms = false,
   }) async {
     final res = await _api.request('POST', '/auth/signup', body: {
       'first_name': firstName,
       'email': email,
       'password': password,
+      'accept_terms': acceptTerms,
     });
     await _api.setToken((res as Map)['token'] as String);
   }
@@ -62,6 +66,22 @@ class Repository {
       'password': password,
     });
     await _api.setToken((res as Map)['token'] as String);
+  }
+
+  /// Confirme l'adresse email avec le code à 6 chiffres reçu.
+  Future<void> verifyEmail(String code) async {
+    await _api.request('POST', '/auth/verify-email', body: {'code': code});
+  }
+
+  /// Demande un nouveau code. L'API impose une minute d'attente entre deux
+  /// envois : le message d'erreur le dit, l'écran l'affiche tel quel.
+  Future<void> resendVerification() async {
+    await _api.request('POST', '/auth/verify-email/resend');
+  }
+
+  /// Ré-accepte les conditions après un changement de version.
+  Future<void> acceptTerms() async {
+    await _api.request('POST', '/auth/accept-terms');
   }
 
   /// Supprime définitivement le compte (et tout ce qui s'y rattache).
@@ -172,6 +192,41 @@ class Repository {
         if (details != null && details.isNotEmpty) 'details': details,
       });
 
+  // ───────────── Modération (équipe du campus) ─────────────
+
+  /// La file des personnes signalées. L'API répond 403 si le compte n'est pas
+  /// modérateur : c'est la seule protection, l'écran n'est qu'un confort.
+  Future<List<ModerationItem>> moderationQueue({bool all = false}) async {
+    final res = await _api.request(
+      'GET',
+      '/admin/reports',
+      query: {if (all) 'status': 'all'},
+    );
+    final rows = res is Map ? res['items'] : null;
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map<String, dynamic>>()
+        .map(ModerationItem.tryFromMap)
+        .whereType<ModerationItem>()
+        .toList();
+  }
+
+  /// Lève une suspension. Réservé aux modérateurs.
+  Future<void> restoreAccount(String id) =>
+      _api.request('POST', '/admin/users/$id/restore');
+
+  /// Referme un signalement : `dismiss` classe sans suite, `ban` suspend le
+  /// compte (connexion coupée, profil retiré de l'annuaire).
+  Future<void> resolveReport(
+    String id, {
+    required ReportAction action,
+    String? note,
+  }) =>
+      _api.request('POST', '/admin/reports/$id/resolve', body: {
+        'action': action.wire,
+        if (note != null && note.isNotEmpty) 'note': note,
+      });
+
   // ───────────── Position et alarmes ─────────────
 
   Future<void> sendLocation(double lat, double lng) async {
@@ -196,4 +251,17 @@ class Repository {
       return null;
     }
   }
+}
+
+/// Ce qu'un modérateur peut décider pour une personne signalée.
+enum ReportAction {
+  dismiss('dismiss'),
+
+  /// Suspend le compte. Réversible côté base, pas depuis l'app : une
+  /// réactivation demande une intervention manuelle, et c'est voulu.
+  ban('ban');
+
+  const ReportAction(this.wire);
+
+  final String wire;
 }

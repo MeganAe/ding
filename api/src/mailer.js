@@ -54,6 +54,32 @@ export async function sendMail({ to, subject, text }) {
   }
 }
 
+export function verificationEmail(code) {
+  return {
+    subject: `${APP_NAME} — confirme ton adresse`,
+    text:
+      `Ton code de vérification ${APP_NAME} est : ${code}\n\n` +
+      `Il expire dans 24 heures. Tant que tu ne l'as pas saisi, l'alarme ne ` +
+      `peut pas sonner : c'est ce qui empêche quelqu'un de créer un compte ` +
+      `avec une adresse qui n'est pas la sienne.\n` +
+      `Si tu n'es pas à l'origine de cette inscription, ignore cet email.`,
+  };
+}
+
+export function reportNoticeEmail({ name, reports, reasons }) {
+  return {
+    subject: `${APP_NAME} — nouveau signalement`,
+    text:
+      `Un profil vient d'être signalé : ${name || 'profil sans prénom'}\n` +
+      `Signalements reçus : ${reports}\n` +
+      `Motif(s) : ${reasons}\n\n` +
+      `Ouvre l'écran « Signalements » dans l'app (onglet Profil) pour ` +
+      `classer le signalement ou suspendre le compte.\n\n` +
+      `L'identité de la personne qui signale ne t'est pas communiquée, et ` +
+      `ne doit pas être cherchée.`,
+  };
+}
+
 export function resetCodeEmail(code) {
   return {
     subject: `${APP_NAME} — code de réinitialisation`,

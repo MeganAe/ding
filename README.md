@@ -29,13 +29,19 @@ des choix se fait entièrement côté serveur.
    champs posés dessus, un seul bouton plein (voir `lib/core/widgets/`).
 2. **Compte** — email + mot de passe, jeton JWT valable 30 jours et conservé
    dans le Keystore Android. Mot de passe oublié : code à 6 chiffres par email.
+   À l'inscription, un second code confirme l'adresse : tant qu'il n'est pas
+   saisi, l'alarme ne sonne pas (le reste de l'app fonctionne).
 3. **Découvrir** — l'annuaire du campus, cherchable et paginé. Tu choisis /
    retires des personnes. Personne n'est notifié. Chaque personne a un menu
    pour la **bloquer** ou la **signaler**.
 4. **Position** — quand l'app est ouverte, la position est envoyée toutes les
    2 minutes (précision haute). Elle n'est jamais renvoyée à un autre
    utilisateur, et elle est purgée au bout de 24 h.
-5. **Alarme** — le serveur crée une alarme quand deux choix sont réciproques
+5. **Modération** — les signalements arrivent dans une file, groupés par
+   personne signalée. Un modérateur (email listé dans `ADMIN_EMAILS`) classe
+   sans suite ou suspend le compte, depuis l'app. Le signalant n'est jamais
+   identifié.
+6. **Alarme** — le serveur crée une alarme quand deux choix sont réciproques
    et que les deux positions datent de moins de 15 minutes et sont distantes
    de moins de 150 m. L'app interroge `/alarms` toutes les 20 secondes ; chaque
    nouvelle alarme ouvre l'écran rouge, qui sonne (`assets/audio/ding.wav`) et
@@ -145,6 +151,37 @@ assets/            images, icônes, son d'alarme
 logo/              déclinaisons du symbole Ding
 ```
 
+## CGU et modération
+
+Les textes légaux vivent dans l'app, pas dans l'API :
+`lib/features/legal/legal_texts.dart`. Deux documents — conditions
+d'utilisation et confidentialité — écrits pour être vérifiables : chaque
+phrase correspond à un comportement du code (durées de conservation, ce qui
+est visible, ce qui ne l'est pas). Ils sont accessibles depuis l'écran de
+connexion et depuis le profil.
+
+À l'inscription, la case « J'accepte les conditions » est obligatoire : l'API
+refuse `POST /auth/signup` sans `accept_terms: true`, et garde la version
+acceptée (`terms_version`, `terms_accepted_at`). `GET /config` publie la
+version en cours (`TERMS_VERSION`), ce qui permettra de redemander
+l'acceptation lors d'un changement de texte.
+
+Côté modération, `GET /admin/reports` renvoie un profil par personne signalée
+(nombre de signalements, motifs, dernier commentaire) et
+`POST /admin/reports/:id/resolve` referme la ligne : `dismiss` classe sans
+suite, `ban` suspend le compte (connexion coupée, profil retiré de
+l'annuaire, position et choix effacés). L'écran reste invisible pour les
+autres comptes, et le serveur vérifie le rôle à chaque appel — masquer un
+bouton n'a jamais protégé une route.
+
+Le contact publié dans les textes se règle au build :
+
+```bash
+flutter build apk --release \
+  --dart-define=API_URL=https://ton-api.onrender.com \
+  --dart-define=CONTACT_EMAIL=equipe@ton-domaine.org
+```
+
 ## Vie privée
 
 - La position n'est **jamais** renvoyée à un autre utilisateur ; elle sert
@@ -168,16 +205,18 @@ logo/              déclinaisons du symbole Ding
 - **Une alarme par heure et par paire** (`bucket`), pour éviter le harcèlement.
 - **Annuaire ouvert par défaut** : tous les inscrits visibles, sauf ceux qui
   s'en retirent. Le secret porte sur les choix, pas sur l'existence des comptes.
-- **Les signalements sont enregistrés, pas encore traités.** La table
-  `reports` garde le motif et la date ; aucune interface d'administration ne
-  les liste. À faire avant d'ouvrir le campus au-delà d'un cercle de
-  confiance.
-- **Pas de vérification d'email** : rien n'empêche de s'inscrire avec l'adresse
-  de quelqu'un d'autre. À traiter avant d'activer `ALLOWED_EMAIL_DOMAIN`.
+- **L'alarme exige une adresse vérifiée.** C'est ce qui empêche un compte
+  jetable de faire sonner le téléphone de quelqu'un. Le reste de l'app
+  (annuaire, choix secrets) fonctionne sans vérification.
+- **L'équipe est prévenue par email, une fois par profil signalé.** Pas de
+  notification push côté modérateur : il faut ouvrir l'écran Signalements.
 - **Cold start Render** : l'API gratuite se met en veille ; le premier appel
   peut prendre plusieurs dizaines de secondes.
 - **APK signé avec la clé de debug** : installable, mais refusé par le Play
   Store. Un keystore de release sera nécessaire (hors dépôt, dans les secrets).
+- **Pas de notifications push (FCM)** : l'alarme repose sur une interrogation
+  toutes les 20 s de l'app ouverte ou en arrière-plan. Un téléphone dont l'app
+  est quittée ne reçoit rien avant sa prochaine ouverture.
 
 ## Feuille de route
 
@@ -186,11 +225,14 @@ logo/              déclinaisons du symbole Ding
 - [ ] Suivi même quand l'app est quittée (isolate séparé)
 - [ ] Notification prioritaire (écran qui s'allume comme un appel)
 - [ ] Notifications push FCM pour remplacer le polling 20 s
-- [ ] Vérification d'email
+- [x] Prévenir l'équipe par email quand un signalement arrive
+- [x] Réactivation d'un compte suspendu depuis l'app
+- [x] Vérification d'email (code à 6 chiffres, alarme conditionnée)
 - [x] Pagination / recherche côté serveur pour l'annuaire
 - [x] Signalement et blocage d'un profil
-- [ ] CGU + politique de confidentialité + âge minimum
-- [ ] Polices embarquées plutôt que téléchargées par `google_fonts`
+- [x] CGU + politique de confidentialité + âge minimum
+- [x] Modération des signalements (file, classement, suspension, réactivation)
+- [x] Polices embarquées (`assets/fonts/`, plus de téléchargement au lancement)
 - [ ] Signature de l'APK (`key.properties` + secret GitHub)
 - [x] Alarme sonore
 - [x] Mot de passe oublié

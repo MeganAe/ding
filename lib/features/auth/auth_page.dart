@@ -29,6 +29,10 @@ class _AuthPageState extends ConsumerState<AuthPage> {
   bool _signup = false;
   bool _busy = false;
   bool _showPassword = false;
+
+  /// Case des conditions d'utilisation : obligatoire à l'inscription, et
+  /// remise à zéro dès qu'on repasse en mode connexion.
+  bool _accepted = false;
   String? _message;
 
   @override
@@ -50,6 +54,11 @@ class _AuthPageState extends ConsumerState<AuthPage> {
           : 'Renseigne ton email et ton mot de passe.');
       return;
     }
+    if (_signup && !_accepted) {
+      setState(() => _message =
+          'Coche la case pour accepter les conditions d’utilisation.');
+      return;
+    }
     if (_signup &&
         Config.allowedEmailDomain.isNotEmpty &&
         !email.toLowerCase().endsWith('@${Config.allowedEmailDomain}')) {
@@ -65,7 +74,12 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     try {
       final repo = ref.read(repositoryProvider);
       if (_signup) {
-        await repo.signUp(firstName: name, email: email, password: password);
+        await repo.signUp(
+          firstName: name,
+          email: email,
+          password: password,
+          acceptTerms: _accepted,
+        );
       } else {
         await repo.logIn(email: email, password: password);
       }
@@ -81,6 +95,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     setState(() {
       _signup = !_signup;
       _message = null;
+      _accepted = false;
     });
   }
 
@@ -92,7 +107,11 @@ class _AuthPageState extends ConsumerState<AuthPage> {
 
     // Clavier ouvert, la photo s'efface : le formulaire garde la priorité.
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final heroHeight = (size.height * 0.40).clamp(200.0, 360.0);
+    // 30 % plutôt que 40 % : les liens légaux ajoutés sous le bouton
+    // repoussaient le bouton de bascule (« J'ai déjà un compte ») sous la
+    // ligne de flottaison sur un téléphone de 844 px. La photo reste large,
+    // mais on ne descend plus pour trouver le reste du formulaire.
+    final heroHeight = (size.height * 0.30).clamp(180.0, 300.0);
 
     return Scaffold(
       backgroundColor: DingColors.paper,
@@ -164,7 +183,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                     _signup ? _signupSubtitle() : _loginSubtitle(),
                     style: theme.bodyLarge,
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 24),
                   if (_signup) ...[
                     TextField(
                       controller: _name,
@@ -208,6 +227,39 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                       ),
                     ),
                   ),
+                  if (_signup) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: Checkbox(
+                            value: _accepted,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            onChanged: _busy
+                                ? null
+                                : (v) =>
+                                    setState(() => _accepted = v ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'J’accepte les conditions d’utilisation et la '
+                              'politique de confidentialité.',
+                              style: theme.bodySmall,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (_message != null) ...[
                     const SizedBox(height: 16),
                     Row(
@@ -245,6 +297,25 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                             ),
                           )
                         : Text(_signup ? 'Créer mon compte' : 'Me connecter'),
+                  ),
+                  const SizedBox(height: 4),
+                  // `Wrap` plutôt que `Row` : sur un écran étroit, les deux
+                  // liens passent à la ligne au lieu de déborder.
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _LegalLink(
+                        label: 'Conditions',
+                        onTap: _busy ? null : () => context.push('/legal/terms'),
+                      ),
+                      Text('·', style: theme.bodySmall),
+                      _LegalLink(
+                        label: 'Confidentialité',
+                        onTap:
+                            _busy ? null : () => context.push('/legal/privacy'),
+                      ),
+                    ],
                   ),
                   if (!_signup)
                     Center(
@@ -288,5 +359,28 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     }
     return 'Un prénom, un mot de passe, ton adresse @$domain. Rien n\'est '
         'public.';
+  }
+}
+
+/// Lien discret vers un texte légal, au même niveau que le reste du pied de
+/// page : lisible, sans concurrencer le bouton principal.
+class _LegalLink extends StatelessWidget {
+  const _LegalLink({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: DingColors.slate,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        minimumSize: const Size(0, 32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+    );
   }
 }

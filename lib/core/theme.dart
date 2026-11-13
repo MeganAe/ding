@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+
+/// Polices embarquées dans l'app (voir pubspec.yaml et assets/fonts/).
+/// Elles ne sont plus téléchargées au lancement : l'écran est correct dès la
+/// première image, même hors ligne.
+const bodyFont = 'InstrumentSans';
+const displayFont = 'BricolageGrotesque';
 
 /// Palette : un papier froid, une encre bleu nuit, et un seul rouge
 /// réservé à l'alarme. Pas de dégradé, pas d'ombre.
@@ -34,11 +39,12 @@ ThemeData buildTheme() {
     ),
   );
 
-  final body = GoogleFonts.instrumentSansTextTheme(base.textTheme)
-      .apply(bodyColor: c, displayColor: c);
+  final body = base.textTheme
+      .apply(fontFamily: bodyFont, bodyColor: c, displayColor: c);
 
   TextStyle head(double size, {double h = 1.1, double ls = -0.5}) =>
-      GoogleFonts.bricolageGrotesque(
+      TextStyle(
+        fontFamily: displayFont,
         fontSize: size,
         fontWeight: FontWeight.w700,
         height: h,

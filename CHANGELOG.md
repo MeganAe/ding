@@ -1,5 +1,127 @@
 # Journal des modifications
 
+## 0.4.0 — le liseré noir, les polices, et la vérification d'email
+
+Cette version ferme les points restés ouverts du cahier des charges — sauf la
+signature de release, volontairement laissée de côté.
+
+### Corrigé : le liseré noir sur Android 8 et 9
+
+Sur un téléphone Android 9, une ligne noire apparaissait sur l'onboarding.
+Deux causes, toutes deux traitées :
+
+- **Les barres système gardaient la couleur par défaut du système.** Sur
+  Android 8 et 9, cela donne une barre de navigation noire en bas et une barre
+  d'état sombre en haut. L'app force maintenant les deux au papier, côté thème
+  Android (`tool/android/styles.xml`, pour l'écran de démarrage) et côté Dart
+  (`SystemChrome`, dès la première image).
+- **Le flou de la photo passait par un filtre d'image GPU.** Sur les appareils
+  sans Vulkan — donc Android 8 et 9 — le rendu emprunte le chemin OpenGL ES,
+  où ce flou laisse des liserés. La version floue est désormais obtenue en
+  décodant l'image à 40 px de large et en la laissant être agrandie : même
+  fondu, aucun filtre GPU, même résultat sur tous les téléphones.
+
+### Polices embarquées
+
+`google_fonts` téléchargeait Instrument Sans et Bricolage Grotesque au premier
+lancement : l'app s'affichait en police système tant que le réseau n'avait pas
+répondu, et restait sans la bonne police hors ligne. Les deux familles sont
+maintenant dans `assets/fonts/` (SIL Open Font License, licences incluses) et
+la dépendance `google_fonts` a disparu.
+
+### Vérification d'email
+
+- Code à 6 chiffres envoyé à l'inscription, valable 24 h, 5 essais, renvoi une
+  fois par minute.
+- **Une adresse non vérifiée n'empêche pas d'utiliser l'app** (annuaire, choix
+  secrets, profil) mais empêche l'envoi de position : l'alarme ne sonne pas.
+  Un compte jetable ne doit pas pouvoir faire sonner un téléphone, sans pour
+  autant bloquer quelqu'un dont l'email a atterri dans les indésirables.
+- Écran de confirmation, bandeau sur l'accueil, état visible dans le profil.
+- Les comptes existants sont marqués vérifiés une seule fois au démarrage :
+  déployer cette version ne coupe l'alarme de personne.
+
+### Modération
+
+- **L'équipe est prévenue par email** à chaque nouveau profil signalé (une
+  seule fois par personne : resignaler ne noie pas la boîte).
+- **Réactivation d'un compte suspendu depuis l'app** : l'écran Signalements
+  bascule sur l'historique et propose « Réactiver le compte ».
+
+### Conditions d'utilisation
+
+- **Ré-acceptation** : si la version publiée par l'API (`TERMS_VERSION`) ne
+  correspond plus à celle du compte, un dialogue propose de relire puis
+  d'accepter. L'app reste utilisable en attendant — on n'enferme personne
+  dehors pour un texte.
+
+### Tests
+
+- API : **34** (+6) — position refusée sans vérification, code faux puis code
+  épuisé, renvoi limité à une minute, confirmation, réactivation, refus d'un
+  compte ordinaire.
+- App : **64** (+10) — écran de confirmation (code court, envoi, compte à
+  rebours), historique et réactivation côté modération, lecture du profil.
+
+## 0.3.2 — signalements traités, conditions écrites
+
+Deux manques qui empêchaient de mettre l'app entre les mains de quelqu'un :
+les signalements ne servaient à rien (aucun moyen de les lire), et il n'y
+avait aucun texte à accepter à l'inscription.
+
+### Modération des signalements
+
+- `GET /admin/reports` : une ligne par **personne** signalée, avec le nombre de
+  signalements, les motifs et le dernier commentaire. Les plus signalées
+  d'abord.
+- `POST /admin/reports/:id/resolve` : `dismiss` (classer sans suite) ou `ban`
+  (suspendre). Suspendre coupe la connexion, retire le profil de l'annuaire et
+  efface la position et les choix de la personne — sans quoi une alarme
+  pourrait encore sonner avec un compte qui n'a plus accès à l'app.
+- L'identité de la personne qui signale n'est renvoyée par aucune route, pas
+  même à l'équipe : dans un campus de quelques centaines de personnes, un
+  signalement attribuable ne serait plus fait.
+- Les comptes de modération sont désignés par `ADMIN_EMAILS` (variable
+  d'environnement), pas par un écran d'administration : impossible de
+  s'attribuer le rôle depuis l'app.
+- Écran « Signalements » dans le profil des modérateurs : file, motif, note
+  interne facultative, confirmation avant suspension. Invisible pour les
+  autres comptes, et le serveur revérifie le rôle à chaque appel.
+
+### Conditions d'utilisation et confidentialité
+
+- Deux textes complets, écrits pour être vérifiables : chaque phrase
+  correspond à un comportement réel du code (24 h pour la position, 30 jours
+  pour les alarmes, ce que voit un modérateur, ce que l'app ne promet pas).
+  Fichier : `lib/features/legal/legal_texts.dart`.
+- Écrans de lecture accessibles depuis la connexion **et** depuis le profil,
+  lisibles sans compte.
+- La case « J'accepte les conditions » est obligatoire à l'inscription :
+  l'API refuse `POST /auth/signup` sans `accept_terms: true` et enregistre la
+  version acceptée (`terms_version`, `terms_accepted_at`).
+- `GET /config` publie `terms_version`, pour pouvoir redemander l'acceptation
+  quand le texte change.
+- L'adresse de contact des textes se règle au build :
+  `--dart-define=CONTACT_EMAIL=…`.
+
+### Corrections au passage
+
+- L'écran de connexion respire moins haut (photo à 30 % au lieu de 40 %) pour
+  que le bouton « J'ai déjà un compte » reste visible sur un téléphone de
+  844 px malgré les liens légaux ajoutés.
+- L'API relit le rôle et l'état de suspension du compte à chaque requête
+  authentifiée : une suspension prend effet immédiatement, sans attendre
+  l'expiration du jeton (30 jours).
+
+### Tests
+
+- API : **28** (+8) — CGU obligatoire, trace de la version, file groupée,
+  signalant jamais identifié, classement sans suite, suspension qui coupe
+  tout, actions et identifiants invalides.
+- App : **51** (+15) — rendu des deux textes et de la file, décision envoyée
+  avec sa note, confirmation avant suspension, annulation, refus d'inscription
+  sans case cochée, et un test de mise en page sur un écran de 360 px.
+
 ## 0.3.1 — l'alarme sonne écran éteint
 
 Jusqu'ici, Ding ne vous localisait que lorsque l'app était ouverte : autant dire

@@ -24,10 +24,21 @@ class FakeApi {
 
   final List<String> calls = [];
 
+  /// Corps JSON envoyé, par signature d'appel : permet de vérifier ce que
+  /// l'app transmet vraiment (par exemple `accept_terms`).
+  final Map<String, String> bodies = {};
+
   bool called(String signature) => calls.contains(signature);
 
+  Map<String, dynamic>? body(String signature) {
+    final raw = bodies[signature];
+    return raw == null ? null : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
   http.Client get client => MockClient((req) async {
-        calls.add('${req.method} ${req.url.path}');
+        final signature = '${req.method} ${req.url.path}';
+        calls.add(signature);
+        if (req.body.isNotEmpty) bodies[signature] = req.body;
         final body = respond(req.method, req.url);
         if (body == null) {
           return http.Response('{"error":"introuvable"}', 404,

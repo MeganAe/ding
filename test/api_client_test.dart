@@ -312,4 +312,203 @@ void main() {
       expect(config?.alarmPollSeconds, 15);
     });
   });
+
+  group('CGU et modération', () {
+    test('l’inscription transmet l’acceptation des conditions', () async {
+      final store = await _emptyStore();
+      String? corps;
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          corps = req.body;
+          return _json(const {'token': 'jeton-neuf'});
+        }),
+      ));
+
+      await repo.signUp(
+        firstName: 'Léa',
+        email: 'lea@campus.test',
+        password: 'motdepasse',
+        acceptTerms: true,
+      );
+
+      final envoye = jsonDecode(corps!) as Map<String, dynamic>;
+      expect(envoye['accept_terms'], isTrue);
+      expect(envoye['first_name'], 'Léa');
+    });
+
+    test('la file de modération se lit, ligne par ligne', () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json(const {
+              'items': [
+                {
+                  'id': '11111111-1111-1111-1111-111111111111',
+                  'first_name': 'Alice',
+                  'faculty': 'Médecine',
+                  'banned': false,
+                  'reports': 3,
+                  'open_reports': 2,
+                  'reasons': ['harcelement', 'faux_profil'],
+                },
+                {'first_name': 'Sans identifiant'},
+              ],
+              'total': 2,
+              'open_reports': 3,
+            })),
+      ));
+
+      final file = await repo.moderationQueue();
+      expect(file.length, 1, reason: 'une ligne sans identifiant est ignorée');
+      expect(file.first.firstName, 'Alice');
+      expect(file.first.openReports, 2);
+      expect(file.first.reasonLabel, 'Harcèlement · Faux profil');
+    });
+
+    test('une décision envoie l’action et la note interne', () async {
+      final store = await _emptyStore();
+      String? corps;
+      String? chemin;
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          chemin = req.url.path;
+          corps = req.body;
+          return _json(const {'ok': true});
+        }),
+      ));
+
+      await repo.resolveReport(
+        'abc',
+        action: ReportAction.ban,
+        note: 'insultes répétées',
+      );
+
+      expect(chemin, '/admin/reports/abc/resolve');
+      final envoye = jsonDecode(corps!) as Map<String, dynamic>;
+      expect(envoye['action'], 'ban');
+      expect(envoye['note'], 'insultes répétées');
+    });
+
+    test('un compte ordinaire reçoit le refus du serveur, sans plantage',
+        () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient(
+          (_) async => _json(
+            const {'error': 'Réservé à l’équipe de modération.'},
+            403,
+          ),
+        ),
+      ));
+
+      await expectLater(
+        repo.moderationQueue(),
+        throwsA(isA<ApiException>()
+            .having((e) => e.status, 'status', 403)
+            .having((e) => e.message, 'message',
+                contains('équipe de modération'))),
+      );
+    });
+  });
+
+  group('Vérification d’email et cycle de vie du compte', () {
+    test('le code de vérification part en clair, et rien d’autre', () async {
+      final store = await _emptyStore();
+      String? corps;
+      String? chemin;
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          chemin = req.url.path;
+          corps = req.body;
+          return _json(const {'ok': true});
+        }),
+      ));
+
+      await repo.verifyEmail('482913');
+
+      expect(chemin, '/auth/verify-email');
+      expect(jsonDecode(corps!), {'code': '482913'});
+    });
+
+    test('un 429 sur le renvoi remonte le message du serveur', () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient(
+          (_) async => _json(
+            const {'error': 'Attends 42 secondes avant de redemander un code.'},
+            429,
+          ),
+        ),
+      ));
+
+      await expectLater(
+        repo.resendVerification(),
+        throwsA(isA<ApiException>()
+            .having((e) => e.status, 'status', 429)
+            .having((e) => e.message, 'message', contains('42 secondes'))),
+      );
+    });
+
+    test('restaurer un compte suspendu appelle la bonne route', () async {
+      final store = await _emptyStore();
+      String? chemin;
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((req) async {
+          chemin = req.url.path;
+          return _json(const {'ok': true});
+        }),
+      ));
+
+      await repo.restoreAccount('abc');
+      expect(chemin, '/admin/users/abc/restore');
+    });
+
+    test('le profil lit email_verified et la version des conditions', () async {
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json(const {
+              'id': 'u1',
+              'first_name': 'Léa',
+              'email_verified': false,
+              'terms_version': '2026-11-01',
+            })),
+      ));
+
+      final me = await repo.me();
+      expect(me?.emailVerified, isFalse);
+      expect(me?.termsVersion, '2026-11-01');
+    });
+
+    test('un serveur muet sur email_verified est considéré comme vérifié',
+        () async {
+      // Sinon un bandeau « confirme ton adresse » apparaîtrait contre une API
+      // plus ancienne, sans aucun moyen de le faire disparaître.
+      final store = await _emptyStore();
+      final repo = Repository(ApiClient(
+        store,
+        baseUrl: _base,
+        httpClient: MockClient((_) async => _json(const {
+              'id': 'u1',
+              'first_name': 'Léa',
+            })),
+      ));
+
+      expect((await repo.me())?.emailVerified, isTrue);
+    });
+  });
 }

@@ -144,6 +144,14 @@ final alarmsProvider = FutureProvider.autoDispose<List<AlarmItem>>((ref) async {
 
 /// Réglages publics de l'API : le rayon d'alarme et les intervalles viennent
 /// du serveur, plus d'une constante recopiée dans l'app.
+/// File de modération. Le tri est fait par le serveur (les plus signalés
+/// d'abord) ; l'écran se contente de l'afficher.
+final moderationQueueProvider =
+    FutureProvider.autoDispose.family<List<ModerationItem>, bool>(
+  // `true` = historique, comptes suspendus compris.
+  (ref, all) => ref.watch(repositoryProvider).moderationQueue(all: all),
+);
+
 final serverConfigProvider = FutureProvider<ServerConfig?>(
   (ref) => ref.watch(repositoryProvider).config(),
 );

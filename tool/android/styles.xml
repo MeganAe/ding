@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Thème Android de Ding.
+
+  Pourquoi ce fichier existe : le thème généré par `flutter create` laisse les
+  barres système à la couleur par défaut du système. Sur Android 8 et 9, cela
+  donne une barre de navigation NOIRE en bas de l'écran et une barre d'état
+  sombre en haut — visibles comme un liseré noir, surtout sur l'onboarding où
+  la photo passe sous la barre d'état.
+
+  On force donc les deux barres au papier, et l'app ajuste ensuite la couleur
+  des icônes depuis Dart (SystemChrome, dans main.dart).
+
+  Les attributs « icônes sombres » (windowLightStatusBar, API 23+, et
+  windowLightNavigationBar, API 27+) ne sont volontairement PAS ici : ils
+  feraient échouer lint sur minSdk 23. C'est le code Dart qui s'en charge.
+-->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/ding_paper</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@color/ding_paper</item>
+        <item name="android:navigationBarColor">@color/ding_paper</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/ding_paper</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@color/ding_paper</item>
+        <item name="android:navigationBarColor">@color/ding_paper</item>
+    </style>
+</resources>

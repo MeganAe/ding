@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/location_service.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
+import '../../data/api_client.dart';
 import '../../data/models.dart';
 import '../alarm/alarms_page.dart';
 import '../discover/discover_page.dart';
@@ -48,6 +49,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
   /// répète pas à chaque retour dans l'app.
   bool _hideBackgroundHint = false;
 
+  /// Le dialogue « les conditions ont changé » n'est proposé qu'une fois par
+  /// session : le répéter à chaque image serait du harcèlement.
+  bool _termsProposed = false;
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +72,68 @@ class _HomeShellState extends ConsumerState<HomeShell>
     // et on redemande les alarmes tout de suite, sans attendre le cycle.
     unawaited(ref.read(locationServiceProvider.notifier).start());
     ref.invalidate(alarmsProvider);
+  }
+
+  /// Les conditions stockées sur le compte ne sont plus celles du serveur.
+  void _maybeAskTerms(Profile? me, ServerConfig? config) {
+    if (_termsProposed || me == null || config == null) return;
+    if (me.termsVersion == null || config.termsVersion == null) return;
+    if (me.termsVersion == config.termsVersion) return;
+
+    _termsProposed = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askTerms(config));
+  }
+
+  Future<void> _askTerms(ServerConfig config) async {
+    if (!mounted) return;
+    final choix = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Les conditions ont changé'),
+        content: Text(
+          'Une nouvelle version des conditions d’utilisation est en ligne '
+          '(${config.termsVersion}). Tu peux la relire avant de l’accepter : '
+          'l’app reste utilisable en attendant.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('relire'),
+            child: const Text('Relire'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('plus_tard'),
+            child: const Text('Plus tard'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('accepter'),
+            child: const Text('J’accepte'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (choix == 'relire') {
+      // On laisse le dialogue se reproposer au retour de la lecture.
+      _termsProposed = false;
+      await context.push('/legal/terms');
+      return;
+    }
+    if (choix != 'accepter') return;
+
+    try {
+      await ref.read(repositoryProvider).acceptTerms();
+      ref.invalidate(myProfileProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Conditions acceptées.')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   Future<void> _openSettings(LocationStatus status) async {
@@ -123,13 +190,38 @@ class _HomeShellState extends ConsumerState<HomeShell>
       _ => false,
     };
 
+    final me = ref.watch(myProfileProvider).valueOrNull;
+    _maybeAskTerms(me, ref.watch(serverConfigProvider).valueOrNull);
+    final emailATConfirmer = me != null && !me.emailVerified;
+
     return Scaffold(
       body: Column(
         children: [
+          if (emailATConfirmer)
+            _NoticeBar(
+              icon: Icons.mark_email_unread_outlined,
+              text: 'Confirme ton adresse email : tant que ce n’est pas fait, '
+                  'l’alarme ne sonne pas.',
+              actionLabel: 'Vérifier',
+              onAction: () => context.push('/verify'),
+            ),
           if (showBanner)
-            _LocationBanner(
-              status: location,
-              onOpenSettings: () => _openSettings(location),
+            _NoticeBar(
+              icon: Icons.location_off_outlined,
+              text: switch (location) {
+                LocationStatus.off =>
+                  "Le GPS est coupé : l'alarme ne peut pas sonner.",
+                LocationStatus.denied =>
+                  "Sans accès à ta position, l'alarme ne peut pas sonner.",
+                _ => "L'alarme ne sonne que si Ding est ouvert. Autorise "
+                    '« Toujours » pour qu’elle sonne aussi écran éteint.',
+              },
+              actionLabel: switch (location) {
+                LocationStatus.off => 'Activer',
+                LocationStatus.denied => 'Autoriser',
+                _ => 'Réglages',
+              },
+              onAction: () => _openSettings(location),
               onDismiss: location == LocationStatus.foregroundOnly
                   ? () => setState(() => _hideBackgroundHint = true)
                   : null,
@@ -190,41 +282,29 @@ class _HomeShellState extends ConsumerState<HomeShell>
   }
 }
 
-/// Sans position, l'alarme ne peut pas sonner : l'utilisateur doit le savoir,
-/// avec un moyen d'aller corriger le réglage.
-class _LocationBanner extends StatelessWidget {
-  const _LocationBanner({
-    required this.status,
-    required this.onOpenSettings,
+/// Une barre d'alerte en haut de l'écran : icône, une phrase, une action.
+/// Sert au GPS coupé, à la permission manquante et à l'email à confirmer.
+class _NoticeBar extends StatelessWidget {
+  const _NoticeBar({
+    required this.icon,
+    required this.text,
+    required this.actionLabel,
+    required this.onAction,
     this.onDismiss,
   });
 
-  final LocationStatus status;
-  final VoidCallback onOpenSettings;
+  final IconData icon;
+  final String text;
+  final String actionLabel;
+  final VoidCallback onAction;
 
-  /// Non nul seulement quand le rappel n'est pas bloquant (permission
-  /// « pendant l'usage ») : l'utilisateur peut le repousser.
+  /// Non nul quand le rappel n'est pas bloquant : l'utilisateur peut le
+  /// repousser.
   final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
-
-    final (String texte, String action) = switch (status) {
-      LocationStatus.off => (
-          "Le GPS est coupé : l'alarme ne peut pas sonner.",
-          'Activer',
-        ),
-      LocationStatus.denied => (
-          "Sans accès à ta position, l'alarme ne peut pas sonner.",
-          'Autoriser',
-        ),
-      _ => (
-          "L'alarme ne sonne que si Ding est ouvert. Autorise « Toujours » "
-          'pour qu’elle sonne aussi écran éteint.',
-          'Réglages',
-        ),
-    };
 
     return Material(
       color: DingColors.mist,
@@ -234,19 +314,15 @@ class _LocationBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
           child: Row(
             children: [
-              const Icon(
-                Icons.location_off_outlined,
-                size: 20,
-                color: DingColors.ink,
-              ),
+              Icon(icon, size: 20, color: DingColors.ink),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  texte,
+                  text,
                   style: theme.bodySmall?.copyWith(color: DingColors.ink),
                 ),
               ),
-              TextButton(onPressed: onOpenSettings, child: Text(action)),
+              TextButton(onPressed: onAction, child: Text(actionLabel)),
               if (onDismiss != null)
                 IconButton(
                   tooltip: 'Plus tard',

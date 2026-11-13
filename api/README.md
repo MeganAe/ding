@@ -6,12 +6,15 @@ API REST Node.js + PostgreSQL. Le matching se fait côté serveur : aucune route
 
 | Méthode | Route | Rôle |
 |---|---|---|
-| POST | `/auth/signup` | Créer un compte (`first_name`, `email`, `password`) |
+| POST | `/auth/signup` | Créer un compte (`first_name`, `email`, `password`, `accept_terms: true` — obligatoire) |
 | POST | `/auth/login` | Se connecter (`email`, `password`) |
 | POST | `/auth/forgot` | Demander un code de réinitialisation (`email`) |
 | POST | `/auth/reset` | Échanger le code contre un mot de passe (`email`, `code`, `password`) |
 | POST | `/auth/logout` | Révoquer le jeton courant (déconnexion côté serveur) |
-| GET | `/config` | Réglages publics : rayon d'alarme, intervalles |
+| POST | `/auth/verify-email` | Confirmer l'adresse (`code` à 6 chiffres) |
+| POST | `/auth/verify-email/resend` | Renvoyer un code (un par minute maximum) |
+| POST | `/auth/accept-terms` | Accepter la version courante des CGU |
+| GET | `/config` | Réglages publics : rayon d'alarme, intervalles, version des CGU |
 | GET / PUT / DELETE | `/me` | Lire / modifier / supprimer mon compte |
 | GET | `/profiles` | Annuaire paginé : `q`, `limit` (1–100), `offset` → `{items, total, next_offset}` |
 | GET | `/crushes` | Mes choix uniquement |
@@ -22,9 +25,58 @@ API REST Node.js + PostgreSQL. Le matching se fait côté serveur : aucune route
 | POST | `/blocks/:id` | Bloquer : retire de l'annuaire, efface les choix et les alarmes de la paire |
 | DELETE | `/blocks/:id` | Débloquer |
 | POST | `/reports/:id` | Signaler (`reason` : `harcelement`, `faux_profil`, `intimidation`, `autre`) |
-| POST | `/location` | Envoyer ma position (`lat`, `lng`) |
+| GET | `/admin/reports` | **Modérateur.** File des personnes signalées, groupée par personne (`?status=all` pour l'historique) |
+| POST | `/admin/reports/:id/resolve` | **Modérateur.** Refermer : `{action: "dismiss" \| "ban", note?}` |
+| POST | `/admin/users/:id/restore` | **Modérateur.** Lever une suspension |
+| POST | `/location` | Envoyer ma position (`lat`, `lng`) — **403 si l'email n'est pas vérifié** |
 | GET | `/alarms` | Mes alarmes |
 | GET | `/health` | Vérification (pour l'hébergeur) |
+
+## Modération
+
+Les modérateurs sont désignés par la variable `ADMIN_EMAILS` (liste d'emails
+séparés par des virgules). Aucun écran ne permet de s'attribuer le rôle : il
+faut modifier la configuration, puis redémarrer l'API.
+
+Ce que l'outil permet, et rien de plus :
+
+- **Voir** les profils signalés, avec le nombre de signalements et le motif le
+  plus récent. L'identité de la personne qui signale n'est jamais renvoyée,
+  pas même à l'équipe (`reporter_id` n'apparaît dans aucune réponse).
+- **Classer sans suite** : les signalements ouverts du profil passent en
+  `dismissed`.
+- **Suspendre** : les signalements passent en `banned`, le compte reçoit une
+  date de suspension (`banned_at`), sa position et ses choix sont effacés, il
+  disparaît de l'annuaire et ses jetons cessent d'être acceptés à la requête
+  suivante. Une réactivation se fait à la main en base : c'est volontaire.
+
+Les décisions restent en base (`resolved_by`, `resolution`, `resolved_at`)
+comme trace de ce qui a été décidé, et par qui.
+
+## Vérification d'email
+
+À l'inscription, un code à 6 chiffres part par email (même mécanisme que la
+réinitialisation : `mailer.js`, et les logs du serveur si `RESEND_API_KEY` est
+absent). Il vit 24 heures, tolère 5 essais, et un renvoi est possible une fois
+par minute.
+
+Une adresse non vérifiée n'empêche pas d'utiliser l'app : annuaire, choix
+secrets, profil. Elle empêche **l'envoi de position**, donc l'alarme. C'est le
+compromis retenu : un compte jetable ne doit pas pouvoir faire sonner le
+téléphone de quelqu'un, mais on ne veut pas non plus bloquer l'app entière
+parce qu'un email a atterri dans les indésirables.
+
+Les comptes créés avant l'arrivée de cette fonctionnalité sont marqués comme
+vérifiés une seule fois au démarrage (marqueur `app_meta`), pour ne pas couper
+l'alarme de personnes déjà inscrites.
+
+## Conditions d'utilisation
+
+`POST /auth/signup` refuse une inscription sans `accept_terms: true` et garde
+la version acceptée (`terms_version`, `terms_accepted_at`). La version en
+cours est publiée par `GET /config` : l'app peut ainsi savoir qu'un texte plus
+récent existe. Le texte lui-même vit dans l'app
+(`lib/features/legal/legal_texts.dart`), pas dans l'API.
 
 ## Déployer gratuitement
 

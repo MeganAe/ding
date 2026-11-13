@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 /// Le motif visuel de Ding : une photo pleine largeur qui se dissout dans le
@@ -32,14 +30,29 @@ class HeroMedia extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Deux widgets distincts, mais le même asset : Flutter ne décode l'image
-    // qu'une fois et la partage entre les deux couches.
     Widget image() => Image.asset(
           asset,
           fit: BoxFit.cover,
           alignment: alignment,
           filterQuality: FilterQuality.medium,
           cacheWidth: cacheWidth,
+        );
+
+    // Version floue, sans filtre d'image GPU.
+    //
+    // On décode l'image à 40 px de large et on la laisse être agrandie :
+    // l'interpolation fait tout le travail. C'était d'abord un
+    // `ImageFilter.blur` (sigma 18), mais sur les téléphones qui n'ont pas
+    // Vulkan — Android 8 et 9, donc le parc visé — le rendu du flou passait
+    // par le chemin OpenGL ES et laissait un liseré noir à la jonction avec le
+    // papier. Un décodage minuscule donne le même fondu, coûte moins cher, et
+    // se comporte pareil sur tous les téléphones.
+    Widget blurred() => Image.asset(
+          asset,
+          fit: BoxFit.cover,
+          alignment: alignment,
+          filterQuality: FilterQuality.low,
+          cacheWidth: 40,
         );
 
     // `SizedBox.expand` : le widget prend tout l'espace offert même quand ses
@@ -68,14 +81,7 @@ class HeroMedia extends StatelessWidget {
               ],
               stops: [0.0, 0.58, 0.75, 0.90, 1.0],
             ).createShader(rect),
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: 18,
-                sigmaY: 18,
-                tileMode: ui.TileMode.clamp,
-              ),
-              child: image(),
-            ),
+            child: blurred(),
           ),
 
           // Voile de papier : finit en aplat, pour que le contenu posé juste

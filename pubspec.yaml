@@ -1,7 +1,7 @@
 name: ding
 description: Une alarme qui sonne quand c'est réciproque.
 publish_to: none
-version: 0.3.1+6
+version: 0.4.0+8
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -12,7 +12,6 @@ dependencies:
   http: ^1.2.2
   flutter_riverpod: ^2.6.1
   go_router: ^14.6.0
-  google_fonts: ^6.2.1
   shared_preferences: ^2.3.3
   flutter_secure_storage: ^9.2.2
   geolocator: ^13.0.2
@@ -29,6 +28,25 @@ flutter:
   assets:
     - assets/images/
     - assets/audio/
+  # Polices embarquées (SIL Open Font License, voir assets/fonts/OFL-*.txt).
+  # Elles étaient téléchargées au premier lancement par google_fonts : l'app
+  # s'affichait en police système tant que le réseau n'avait pas répondu, et
+  # restait sans la bonne police hors ligne.
+  fonts:
+    - family: InstrumentSans
+      fonts:
+        - asset: assets/fonts/InstrumentSans-400.ttf
+          weight: 400
+        - asset: assets/fonts/InstrumentSans-500.ttf
+          weight: 500
+        - asset: assets/fonts/InstrumentSans-600.ttf
+          weight: 600
+        - asset: assets/fonts/InstrumentSans-700.ttf
+          weight: 700
+    - family: BricolageGrotesque
+      fonts:
+        - asset: assets/fonts/BricolageGrotesque-700.ttf
+          weight: 700
 
 flutter_launcher_icons:
   android: true

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- La couleur du papier de Ding, utilisée par le thème Android pour les
+     barres système et l'écran de démarrage. Doit rester identique à
+     DingColors.paper (0xFFF3F5F9) dans lib/core/theme.dart. -->
+<resources>
+    <color name="ding_paper">#F3F5F9</color>
+</resources>

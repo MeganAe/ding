@@ -84,6 +84,23 @@ create table if not exists reports (
   check (reporter_id <> reported_id)
 );
 
+-- Codes de vérification d'email. Comme les codes de réinitialisation, on ne
+-- stocke que le hachage.
+create table if not exists email_verifications (
+  user_id uuid primary key references users(id) on delete cascade,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  attempts int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- Table de service : elle retient les migrations déjà appliquées, pour ne les
+-- rejouer qu'une fois.
+create table if not exists app_meta (
+  key text primary key,
+  value text not null
+);
+
 -- Jetons révoqués (déconnexion à distance). On ne garde que l'identifiant du
 -- jeton jusqu'à son expiration : au-delà, il ne vaut plus rien de toute façon.
 create table if not exists revoked_tokens (
@@ -116,11 +133,51 @@ const COLUMNS = `
 alter table users add column if not exists discoverable boolean not null default true;
 alter table users add column if not exists failed_attempts int not null default 0;
 alter table users add column if not exists locked_until timestamptz;
+-- Modération : « user » ou « moderator » (fixé par ADMIN_EMAILS).
+alter table users add column if not exists role text not null default 'user';
+-- Suspendu = ne peut plus se connecter et disparaît de l'annuaire. On ne
+-- supprime pas le compte : la trace du signalement doit rester consultable.
+alter table users add column if not exists banned_at timestamptz;
+-- Preuve d'acceptation des CGU : la version acceptée et quand.
+alter table users add column if not exists terms_version text;
+alter table users add column if not exists terms_accepted_at timestamptz;
+-- Traitement d'un signalement : ouvert -> ignoré ou suspendu.
+alter table reports add column if not exists status text not null default 'open';
+alter table reports add column if not exists resolution text;
+alter table reports add column if not exists resolved_by uuid;
+alter table reports add column if not exists resolved_at timestamptz;
+-- Vérification d'email : nulle tant que le code n'a pas été saisi.
+alter table users add column if not exists email_verified_at timestamptz;
+`;
+
+// Index créés après les colonnes : un index sur une colonne encore absente
+// ferait échouer le démarrage d'une base existante.
+const INDEXES = `
+create index if not exists reports_status_idx on reports (status, created_at desc);
+create index if not exists users_banned_idx on users (banned_at);
 `;
 
 export async function migrate() {
   await pool.query(SCHEMA);
   await pool.query(COLUMNS);
+  await pool.query(INDEXES);
+
+  // Migration « en grand-père » : les comptes créés avant l'arrivée de la
+  // vérification d'email sont considérés comme vérifiés. Sans ça, déployer
+  // cette version couperait l'alarme de tous les utilisateurs existants
+  // jusqu'à ce qu'ils retrouvent un code dans leur boîte. Ne s'exécute qu'une
+  // fois : le marqueur reste dans app_meta.
+  const done = await pool.query(
+    "select 1 from app_meta where key = 'email_verified_grandfather'",
+  );
+  if (done.rowCount === 0) {
+    await pool.query(
+      'update users set email_verified_at = created_at where email_verified_at is null',
+    );
+    await pool.query(
+      "insert into app_meta (key, value) values ('email_verified_grandfather', now()::text)",
+    );
+  }
 }
 
 /**
